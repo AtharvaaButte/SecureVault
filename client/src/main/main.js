@@ -139,8 +139,6 @@ ipcMain.handle('ensure-identity', async () => {
 });
 
 // --- IPC Handlers for Local File Encryption (Cycle 3) ---
-
-// Select a local file via native dialog
 ipcMain.handle('select-file', async () => {
   try {
     return await fileService.selectLocalFile(dialog, mainWindow);
@@ -150,7 +148,6 @@ ipcMain.handle('select-file', async () => {
   }
 });
 
-// Encrypt local file using AES-256-GCM and store in temp storage
 ipcMain.handle('encrypt-file', async (_event, filePath) => {
   try {
     const fileId = crypto.randomUUID();
@@ -158,13 +155,9 @@ ipcMain.handle('encrypt-file', async (_event, filePath) => {
     const stats = fileService.getFileStats(filePath);
     const plaintext = fileService.readFileBuffer(filePath);
 
-    // Encrypt using fileCrypto service (generates fresh 256-bit DEK & fresh 96-bit IV)
     const { dek, iv, ciphertext, authTag } = fileCrypto.encryptBuffer(plaintext);
-
-    // Store DEK exclusively in memory
     fileCrypto.storeDek(fileId, dek);
 
-    // Save encrypted ciphertext and metadata to temp directory
     const tempDir = tempStorage.getTempDir(app);
     const encFilePath = tempStorage.saveEncryptedFile(tempDir, fileId, ciphertext);
 
@@ -195,7 +188,6 @@ ipcMain.handle('encrypt-file', async (_event, filePath) => {
   }
 });
 
-// Decrypt file using in-memory DEK & metadata from temp storage
 ipcMain.handle('decrypt-file', async (_event, fileId) => {
   try {
     const dek = fileCrypto.getDek(fileId);
@@ -210,10 +202,7 @@ ipcMain.handle('decrypt-file', async (_event, fileId) => {
     const iv = Buffer.from(metadata.iv, 'base64');
     const authTag = Buffer.from(metadata.authTag, 'base64');
 
-    // Decrypt ciphertext using fileCrypto service (verifies authTag)
     const decryptedBuffer = fileCrypto.decryptBuffer(ciphertext, dek, iv, authTag);
-
-    // Save decrypted output file to temp directory
     const decFilePath = tempStorage.saveDecryptedFile(tempDir, fileId, metadata.originalName, decryptedBuffer);
 
     return {
@@ -229,7 +218,6 @@ ipcMain.handle('decrypt-file', async (_event, fileId) => {
   }
 });
 
-// Verify byte-for-byte & SHA-256 integrity between original and decrypted files
 ipcMain.handle('verify-file-integrity', async (_event, originalPath, decryptedPath) => {
   try {
     return fileService.verifyFileIntegrity(originalPath, decryptedPath);
@@ -239,7 +227,6 @@ ipcMain.handle('verify-file-integrity', async (_event, originalPath, decryptedPa
   }
 });
 
-// Test 2 & 3: Attempt decryption on tampered ciphertext/authTag (Must fail!)
 ipcMain.handle('test-tamper-decryption', async (_event, fileId) => {
   try {
     const dek = fileCrypto.getDek(fileId);
@@ -249,14 +236,12 @@ ipcMain.handle('test-tamper-decryption', async (_event, fileId) => {
     const metadata = tempStorage.readMetadata(tempDir, fileId);
     const ciphertext = tempStorage.readEncryptedFile(tempDir, fileId);
 
-    // Corrupt the first byte of ciphertext
     const tamperedCiphertext = Buffer.from(ciphertext);
     tamperedCiphertext[0] = tamperedCiphertext[0] ^ 0xFF;
 
     const iv = Buffer.from(metadata.iv, 'base64');
     const authTag = Buffer.from(metadata.authTag, 'base64');
 
-    // Attempt decryption (MUST throw exception!)
     fileCrypto.decryptBuffer(tamperedCiphertext, dek, iv, authTag);
 
     return { caughtTampering: false, error: 'Decryption succeeded on tampered data without auth failure!' };
@@ -268,7 +253,6 @@ ipcMain.handle('test-tamper-decryption', async (_event, fileId) => {
   }
 });
 
-// Test 4: Encrypt the same file twice to verify distinct IVs and non-identical ciphertexts
 ipcMain.handle('test-double-encryption', async (_event, filePath) => {
   try {
     const enc1 = await ipcMain.handle('encrypt-file', null, filePath);
@@ -287,6 +271,99 @@ ipcMain.handle('test-double-encryption', async (_event, filePath) => {
     };
   } catch (error) {
     return { uniqueCiphertexts: false, error: error.message };
+  }
+});
+
+// --- IPC Handler for Cloud Ciphertext Upload (Cycle 4) ---
+ipcMain.handle('upload-ciphertext', async (_event, { fileId, token }) => {
+  try {
+    const tempDir = tempStorage.getTempDir(app);
+    const metadata = tempStorage.readMetadata(tempDir, fileId);
+    const ciphertext = tempStorage.readEncryptedFile(tempDir, fileId);
+
+    const formData = new FormData();
+    formData.append('file', new Blob([ciphertext]), `${metadata.id}.enc`);
+    formData.append('fileId', fileId);
+    formData.append('originalName', metadata.originalName);
+    formData.append('originalSize', metadata.originalSize.toString());
+    formData.append('iv', metadata.iv);
+    formData.append('authTag', metadata.authTag);
+    formData.append('algorithm', metadata.algorithm);
+
+    const response = await fetch('http://localhost:5000/api/files/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || 'Cloud upload failed');
+    }
+
+    return { success: true, file: data.file };
+  } catch (error) {
+    console.error('[Upload Ciphertext Error]:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+// --- IPC Handler for Cloud File Download & Local Decryption (Cycle 5) ---
+ipcMain.handle('download-decrypt-file', async (_event, { fileId, token }) => {
+  try {
+    // 1. Fetch encrypted ciphertext + metadata from Express backend
+    const response = await fetch(`http://localhost:5000/api/files/${fileId}/download`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to download encrypted file from cloud');
+    }
+
+    const { ciphertext, metadata } = data;
+    const ciphertextBuffer = Buffer.from(ciphertext, 'base64');
+    const iv = Buffer.from(metadata.iv, 'base64');
+    const authTag = Buffer.from(metadata.authTag, 'base64');
+
+    // 2. Retrieve DEK from Electron main-process memory (DEK Lifetime Constraint)
+    const dek = fileCrypto.getDek(fileId);
+    if (!dek) {
+      return {
+        success: false,
+        error: 'No in-memory DEK found for this file. (Key wrapping and persistent key management will be implemented in a future cycle)',
+      };
+    }
+
+    // 3. Decrypt ciphertext locally with AES-256-GCM
+    const decryptedBuffer = fileCrypto.decryptBuffer(ciphertextBuffer, dek, iv, authTag);
+
+    // 4. Prompt user with native Save File dialog
+    const saveResult = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Decrypted File',
+      defaultPath: metadata.originalName,
+    });
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { success: false, error: 'File save canceled by user.' };
+    }
+
+    // 5. Save decrypted buffer to user chosen path
+    fs.writeFileSync(saveResult.filePath, decryptedBuffer);
+
+    return {
+      success: true,
+      savedPath: saveResult.filePath,
+      originalName: metadata.originalName,
+      decryptedSize: decryptedBuffer.length,
+    };
+  } catch (error) {
+    console.error('[Download & Decrypt Error]:', error.message);
+    return { success: false, error: error.message };
   }
 });
 

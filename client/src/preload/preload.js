@@ -20,4 +20,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   verifyIntegrity: (origPath, decPath) => ipcRenderer.invoke('verify-file-integrity', origPath, decPath),
   testTamper: (fileId) => ipcRenderer.invoke('test-tamper-decryption', fileId),
   testDoubleEncrypt: (filePath) => ipcRenderer.invoke('test-double-encryption', filePath),
+
+  // Cycle 4 Cloud Ciphertext Upload IPC
+  uploadCiphertext: (fileId, token) => ipcRenderer.invoke('upload-ciphertext', { fileId, token }),
+
+  // Cycle 5 Cloud File Download & Local Decryption IPC
+  downloadDecryptFile: (fileId, token) => ipcRenderer.invoke('download-decrypt-file', { fileId, token }),
 });
