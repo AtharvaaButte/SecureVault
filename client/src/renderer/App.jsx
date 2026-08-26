@@ -22,6 +22,10 @@ export default function App() {
   const [tamperTestResult, setTamperTestResult] = useState(null);
   const [doubleEncResult, setDoubleEncResult] = useState(null);
 
+  // Cycle 4 Cloud Upload & File Listing state
+  const [uploadResult, setUploadResult] = useState(null);
+  const [fileList, setFileList] = useState([]);
+
   const [activeTab, setActiveTab] = useState('login'); // 'login' | 'register'
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
@@ -35,6 +39,21 @@ export default function App() {
   const [regOrgName, setRegOrgName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+
+  // Fetch current user's file listing (Cycle 4)
+  const fetchUserFiles = async (authToken) => {
+    try {
+      const res = await fetch(`${API_BASE}/files`, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFileList(data.files || []);
+      }
+    } catch (err) {
+      console.error('[Fetch Files Error]:', err.message);
+    }
+  };
 
   // Helper to sync local identity with backend (Cycle 2)
   const syncCryptographicIdentity = async (authToken) => {
@@ -98,6 +117,7 @@ export default function App() {
             setCurrentOrg(data.organization);
 
             await syncCryptographicIdentity(savedToken);
+            await fetchUserFiles(savedToken);
           } else {
             if (window.electronAPI && typeof window.electronAPI.clearSession === 'function') {
               await window.electronAPI.clearSession();
@@ -146,6 +166,7 @@ export default function App() {
       }
 
       await syncCryptographicIdentity(data.token);
+      await fetchUserFiles(data.token);
       setSuccessMsg('Organization and Admin account registered successfully!');
     } catch (err) {
       setError(err.message);
@@ -185,6 +206,7 @@ export default function App() {
       }
 
       await syncCryptographicIdentity(data.token);
+      await fetchUserFiles(data.token);
       setSuccessMsg('Logged in successfully!');
     } catch (err) {
       setError(err.message);
@@ -213,13 +235,15 @@ export default function App() {
       setIntegrityResult(null);
       setTamperTestResult(null);
       setDoubleEncResult(null);
+      setUploadResult(null);
+      setFileList([]);
       setLoading(false);
       setSuccessMsg(null);
       setError(null);
     }
   };
 
-  // --- Cycle 3 File Encryption Handlers ---
+  // --- Cycle 3 & 4 Handlers ---
   const handleSelectFile = async () => {
     if (!window.electronAPI || typeof window.electronAPI.selectFile !== 'function') return;
     const file = await window.electronAPI.selectFile();
@@ -230,6 +254,7 @@ export default function App() {
       setIntegrityResult(null);
       setTamperTestResult(null);
       setDoubleEncResult(null);
+      setUploadResult(null);
     }
   };
 
@@ -251,7 +276,6 @@ export default function App() {
     const decRes = await window.electronAPI.decryptFile(encryptResult.fileId);
     if (decRes.success) {
       setDecryptResult(decRes);
-      // Automatically verify byte-for-byte integrity
       const verifyRes = await window.electronAPI.verifyIntegrity(
         encryptResult.originalPath,
         decRes.decryptedPath
@@ -263,20 +287,49 @@ export default function App() {
     setLoading(false);
   };
 
-  const handleRunTamperTest = async () => {
-    if (!encryptResult) return;
+  const handleUploadCiphertext = async () => {
+    if (!encryptResult || !token) return;
     setLoading(true);
-    const tamperRes = await window.electronAPI.testTamper(encryptResult.fileId);
-    setTamperTestResult(tamperRes);
+    setError(null);
+
+    const upRes = await window.electronAPI.uploadCiphertext(encryptResult.fileId, token);
+    if (upRes.success) {
+      setUploadResult(upRes.file);
+      await fetchUserFiles(token);
+    } else {
+      setError(upRes.error || 'Cloud upload failed.');
+    }
     setLoading(false);
   };
 
-  const handleRunDoubleEncryptTest = async () => {
-    if (!selectedFile) return;
-    setLoading(true);
-    const doubleRes = await window.electronAPI.testDoubleEncrypt(selectedFile.filePath);
-    setDoubleEncResult(doubleRes);
-    setLoading(false);
+  const [downloadStatus, setDownloadStatus] = useState({});
+
+  const handleDownloadDecrypt = async (fileId) => {
+    if (!token) return;
+    setDownloadStatus((prev) => ({ ...prev, [fileId]: { loading: true } }));
+    setError(null);
+    setSuccessMsg(null);
+
+    const res = await window.electronAPI.downloadDecryptFile(fileId, token);
+    if (res.success) {
+      setDownloadStatus((prev) => ({
+        ...prev,
+        [fileId]: {
+          loading: false,
+          success: true,
+          savedPath: res.savedPath,
+          originalName: res.originalName,
+          decryptedSize: res.decryptedSize,
+        },
+      }));
+      setSuccessMsg(`✓ File "${res.originalName}" downloaded from B2, decrypted locally, and saved to: ${res.savedPath}`);
+    } else {
+      setDownloadStatus((prev) => ({
+        ...prev,
+        [fileId]: { loading: false, success: false, error: res.error },
+      }));
+      setError(res.error || 'Download/decryption failed.');
+    }
   };
 
   if (initializing) {
@@ -294,7 +347,7 @@ export default function App() {
           <div className="logo-badge">SV</div>
           <div>
             <h1>SecureVault</h1>
-            <p className="subtitle">Cycle 3 — Basic Local File Encryption (AES-256-GCM)</p>
+            <p className="subtitle">Cycle 5 — E2EE Cloud Storage: Download & Local Decryption</p>
           </div>
         </div>
 
@@ -419,36 +472,12 @@ export default function App() {
             </div>
           </div>
 
-          {/* Cryptographic Identity Card (Cycle 2) */}
+          {/* Local File Encryption & Cloud Upload Card (Cycle 3 + 4) */}
           <div className="user-card">
             <div className="user-card-header">
               <div>
-                <h2>Cryptographic Identity</h2>
-                <p className="subtitle">Local X25519 Key Pair & OS Protection</p>
-              </div>
-            </div>
-
-            <div className="detail-row">
-              <span className="detail-label">Private Key Protection</span>
-              <span className="detail-value" style={{ color: '#10b981' }}>
-                {cryptoIdentity.protected ? '✓ Protected (OS SafeStorage)' : '❌ Not Protected'}
-              </span>
-            </div>
-
-            <div className="detail-row">
-              <span className="detail-label">Public Identity</span>
-              <span className="detail-value" style={{ color: '#10b981' }}>
-                {cryptoIdentity.registered ? '✓ Registered (PostgreSQL)' : '❌ Not Registered'}
-              </span>
-            </div>
-          </div>
-
-          {/* Local File Encryption Card (Cycle 3) */}
-          <div className="user-card">
-            <div className="user-card-header">
-              <div>
-                <h2>SecureVault — File Encryption</h2>
-                <p className="subtitle">Local AES-256-GCM Encryption with Fresh Memory DEK</p>
+                <h2>Local Encryption & Cloud Upload</h2>
+                <p className="subtitle">Local AES-256-GCM → Express → Backblaze B2</p>
               </div>
               <button className="btn-primary" onClick={handleSelectFile} disabled={loading}>
                 Select File
@@ -464,70 +493,113 @@ export default function App() {
 
                 <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
                   <button className="btn-primary" onClick={handleEncryptFile} disabled={loading}>
-                    1. Encrypt File
+                    1. Encrypt File Locally
                   </button>
 
                   {encryptResult && (
                     <button className="btn-primary" onClick={handleDecryptFile} disabled={loading}>
-                      2. Decrypt & Verify Byte Integrity
+                      2. Test Local Decryption
                     </button>
                   )}
 
                   {encryptResult && (
-                    <button className="btn-danger" onClick={handleRunTamperTest} disabled={loading}>
-                      3. Test Tamper Failure
+                    <button className="btn-primary" onClick={handleUploadCiphertext} disabled={loading} style={{ backgroundColor: '#0284c7' }}>
+                      3. Upload Ciphertext to B2
                     </button>
                   )}
-
-                  <button className="tab-btn" onClick={handleRunDoubleEncryptTest} disabled={loading} style={{ border: '1px solid #334155' }}>
-                    4. Test Randomness (Double Encrypt)
-                  </button>
                 </div>
 
                 {encryptResult && (
                   <div className="detail-row" style={{ marginTop: '0.75rem' }}>
-                    <span className="detail-label">Encryption</span>
-                    <span className="detail-value" style={{ color: '#10b981' }}>✓ Complete (AES-256-GCM)</span>
+                    <span className="detail-label">Local Encryption</span>
+                    <span className="detail-value" style={{ color: '#10b981' }}>✓ Ciphertext generated (AES-256-GCM)</span>
                   </div>
                 )}
 
                 {decryptResult && (
                   <div className="detail-row">
-                    <span className="detail-label">Decryption</span>
-                    <span className="detail-value" style={{ color: '#10b981' }}>✓ Complete</span>
+                    <span className="detail-label">Local Decryption</span>
+                    <span className="detail-value" style={{ color: '#10b981' }}>✓ Decrypted cleanly</span>
                   </div>
                 )}
 
                 {integrityResult && (
                   <div className="detail-row">
-                    <span className="detail-label">Byte-for-Byte Integrity</span>
+                    <span className="detail-label">Byte Integrity</span>
                     <span className="detail-value" style={{ color: integrityResult.identical ? '#10b981' : '#ef4444' }}>
-                      {integrityResult.identical ? '✓ Original and decrypted files are IDENTICAL (SHA-256 match)' : '❌ Mismatched bytes!'}
+                      {integrityResult.identical ? '✓ Original and decrypted files are 100% IDENTICAL' : '❌ Byte mismatch'}
                     </span>
                   </div>
                 )}
 
-                {tamperTestResult && (
+                {uploadResult && (
                   <div className="detail-row">
-                    <span className="detail-label">Tamper Auth Check</span>
-                    <span className="detail-value" style={{ color: tamperTestResult.caughtTampering ? '#10b981' : '#ef4444' }}>
-                      {tamperTestResult.caughtTampering ? `✓ Caught Tampering! Exception: "${tamperTestResult.errorMessage}"` : '❌ Failed to detect tampering!'}
-                    </span>
-                  </div>
-                )}
-
-                {doubleEncResult && (
-                  <div className="detail-row">
-                    <span className="detail-label">CSPRNG Nonce Randomness</span>
-                    <span className="detail-value" style={{ color: doubleEncResult.uniqueCiphertexts ? '#10b981' : '#ef4444' }}>
-                      {doubleEncResult.uniqueCiphertexts ? '✓ Double Encryption produced 2 unique IVs & distinct ciphertexts' : '❌ Reused IV/Ciphertext!'}
+                    <span className="detail-label">Cloud B2 Upload</span>
+                    <span className="detail-value" style={{ color: '#10b981' }}>
+                      ✓ Ciphertext uploaded! Storage Key: {uploadResult.storageKey}
                     </span>
                   </div>
                 )}
               </>
             ) : (
               <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
-                No file selected. Click "Select File" to test local AES-256-GCM encryption.
+                No file selected. Click "Select File" to encrypt locally and upload ciphertext to Backblaze B2.
+              </p>
+            )}
+          </div>
+
+          {/* Persistent Cloud File Listing Card (Cycle 4 + 5) */}
+          <div className="user-card">
+            <div className="user-card-header">
+              <div>
+                <h2>Your Uploaded Encrypted Files</h2>
+                <p className="subtitle">Backblaze B2 Storage & Local Decryption</p>
+              </div>
+              <button className="tab-btn" onClick={() => fetchUserFiles(token)} style={{ border: '1px solid #334155' }}>
+                Refresh List
+              </button>
+            </div>
+
+            {fileList.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {fileList.map((file) => {
+                  const status = downloadStatus[file.id] || {};
+                  return (
+                    <div key={file.id} style={{ padding: '0.75rem', borderRadius: '8px', backgroundColor: '#0f172a', border: '1px solid #334155' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <div>
+                          <div style={{ fontWeight: 'bold', fontSize: '0.95rem' }}>{file.originalName}</div>
+                          <div className="subtitle">{file.originalSize} bytes</div>
+                        </div>
+                        <button
+                          className="btn-primary"
+                          style={{ backgroundColor: '#10b981', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                          disabled={status.loading}
+                          onClick={() => handleDownloadDecrypt(file.id)}
+                        >
+                          {status.loading ? 'Downloading...' : 'Download & Decrypt'}
+                        </button>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#38bdf8' }}>
+                        Key: {file.storageKey} | Algo: {file.algorithm}
+                      </div>
+                      {status.success && (
+                        <div style={{ fontSize: '0.8rem', color: '#10b981', marginTop: '0.4rem', backgroundColor: '#064e3b', padding: '0.4rem', borderRadius: '4px' }}>
+                          ✓ Downloaded from B2 & Decrypted to: <strong>{status.savedPath}</strong> ({status.decryptedSize} bytes)
+                        </div>
+                      )}
+                      {status.error && (
+                        <div style={{ fontSize: '0.8rem', color: '#f87171', marginTop: '0.4rem', backgroundColor: '#7f1d1d', padding: '0.4rem', borderRadius: '4px' }}>
+                          ❌ {status.error}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
+                No files uploaded yet.
               </p>
             )}
           </div>
