@@ -27,10 +27,8 @@ async function checkDatabaseConnection() {
 
 async function initDb() {
   try {
-    // Ensure pgcrypto extension for UUID generation if needed
     await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto";');
 
-    // Create organizations table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS organizations (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -39,7 +37,6 @@ async function initDb() {
       );
     `);
 
-    // Create users table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -51,12 +48,26 @@ async function initDb() {
       );
     `);
 
-    // Add public_key column if it does not exist
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS public_key TEXT;
     `);
 
-    console.log('[DB] Database tables initialized successfully (organizations, users with public_key)');
+    // Create files table for Cycle 4
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS files (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        original_name VARCHAR(255) NOT NULL,
+        original_size BIGINT NOT NULL,
+        storage_key VARCHAR(255) NOT NULL,
+        encryption_algorithm VARCHAR(50) NOT NULL DEFAULT 'AES-256-GCM',
+        iv VARCHAR(255) NOT NULL,
+        auth_tag VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    console.log('[DB] Database tables initialized successfully (organizations, users, files)');
   } catch (error) {
     console.error('[DB] Database initialization error:', error.message);
   }
