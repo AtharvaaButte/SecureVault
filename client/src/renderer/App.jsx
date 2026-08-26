@@ -14,6 +14,14 @@ export default function App() {
     publicKey: null,
   });
 
+  // Cycle 3 File Encryption state
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [encryptResult, setEncryptResult] = useState(null);
+  const [decryptResult, setDecryptResult] = useState(null);
+  const [integrityResult, setIntegrityResult] = useState(null);
+  const [tamperTestResult, setTamperTestResult] = useState(null);
+  const [doubleEncResult, setDoubleEncResult] = useState(null);
+
   const [activeTab, setActiveTab] = useState('login'); // 'login' | 'register'
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
@@ -28,18 +36,16 @@ export default function App() {
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
 
-  // Helper to sync local identity with backend
+  // Helper to sync local identity with backend (Cycle 2)
   const syncCryptographicIdentity = async (authToken) => {
     if (!window.electronAPI || typeof window.electronAPI.ensureIdentity !== 'function') {
       return;
     }
 
     try {
-      // 1. Ensure local X25519 identity exists in OS SafeStorage
       const localId = await window.electronAPI.ensureIdentity();
 
       if (localId && localId.hasIdentity) {
-        // 2. Register public key with Express backend
         const res = await fetch(`${API_BASE}/crypto/public-key`, {
           method: 'POST',
           headers: {
@@ -91,10 +97,8 @@ export default function App() {
             setCurrentUser(data.user);
             setCurrentOrg(data.organization);
 
-            // Sync cryptographic identity
             await syncCryptographicIdentity(savedToken);
           } else {
-            // Token expired or invalid
             if (window.electronAPI && typeof window.electronAPI.clearSession === 'function') {
               await window.electronAPI.clearSession();
             }
@@ -137,14 +141,11 @@ export default function App() {
       setCurrentUser(data.user);
       setCurrentOrg(data.organization);
 
-      // Persist session securely in OS storage
       if (window.electronAPI && typeof window.electronAPI.saveSession === 'function') {
         await window.electronAPI.saveSession(data.token);
       }
 
-      // Initialize & sync local cryptographic identity
       await syncCryptographicIdentity(data.token);
-
       setSuccessMsg('Organization and Admin account registered successfully!');
     } catch (err) {
       setError(err.message);
@@ -179,14 +180,11 @@ export default function App() {
       setCurrentUser(data.user);
       setCurrentOrg(data.organization);
 
-      // Persist session securely in OS storage
       if (window.electronAPI && typeof window.electronAPI.saveSession === 'function') {
         await window.electronAPI.saveSession(data.token);
       }
 
-      // Sync local cryptographic identity
       await syncCryptographicIdentity(data.token);
-
       setSuccessMsg('Logged in successfully!');
     } catch (err) {
       setError(err.message);
@@ -209,10 +207,76 @@ export default function App() {
       setCurrentUser(null);
       setCurrentOrg(null);
       setCryptoIdentity({ protected: false, registered: false, publicKey: null });
+      setSelectedFile(null);
+      setEncryptResult(null);
+      setDecryptResult(null);
+      setIntegrityResult(null);
+      setTamperTestResult(null);
+      setDoubleEncResult(null);
       setLoading(false);
       setSuccessMsg(null);
       setError(null);
     }
+  };
+
+  // --- Cycle 3 File Encryption Handlers ---
+  const handleSelectFile = async () => {
+    if (!window.electronAPI || typeof window.electronAPI.selectFile !== 'function') return;
+    const file = await window.electronAPI.selectFile();
+    if (file) {
+      setSelectedFile(file);
+      setEncryptResult(null);
+      setDecryptResult(null);
+      setIntegrityResult(null);
+      setTamperTestResult(null);
+      setDoubleEncResult(null);
+    }
+  };
+
+  const handleEncryptFile = async () => {
+    if (!selectedFile) return;
+    setLoading(true);
+    const res = await window.electronAPI.encryptFile(selectedFile.filePath);
+    if (res.success) {
+      setEncryptResult(res);
+    } else {
+      setError(res.error || 'Encryption failed.');
+    }
+    setLoading(false);
+  };
+
+  const handleDecryptFile = async () => {
+    if (!encryptResult) return;
+    setLoading(true);
+    const decRes = await window.electronAPI.decryptFile(encryptResult.fileId);
+    if (decRes.success) {
+      setDecryptResult(decRes);
+      // Automatically verify byte-for-byte integrity
+      const verifyRes = await window.electronAPI.verifyIntegrity(
+        encryptResult.originalPath,
+        decRes.decryptedPath
+      );
+      setIntegrityResult(verifyRes);
+    } else {
+      setError(decRes.error || 'Decryption failed.');
+    }
+    setLoading(false);
+  };
+
+  const handleRunTamperTest = async () => {
+    if (!encryptResult) return;
+    setLoading(true);
+    const tamperRes = await window.electronAPI.testTamper(encryptResult.fileId);
+    setTamperTestResult(tamperRes);
+    setLoading(false);
+  };
+
+  const handleRunDoubleEncryptTest = async () => {
+    if (!selectedFile) return;
+    setLoading(true);
+    const doubleRes = await window.electronAPI.testDoubleEncrypt(selectedFile.filePath);
+    setDoubleEncResult(doubleRes);
+    setLoading(false);
   };
 
   if (initializing) {
@@ -230,7 +294,7 @@ export default function App() {
           <div className="logo-badge">SV</div>
           <div>
             <h1>SecureVault</h1>
-            <p className="subtitle">Cycle 2 — Local Cryptographic Identity</p>
+            <p className="subtitle">Cycle 3 — Basic Local File Encryption (AES-256-GCM)</p>
           </div>
         </div>
 
@@ -349,7 +413,6 @@ export default function App() {
               <span className="detail-label">User Email</span>
               <span className="detail-value">{currentUser.email}</span>
             </div>
-
             <div className="detail-row">
               <span className="detail-label">Organization Name</span>
               <span className="detail-value">{currentOrg?.name}</span>
@@ -378,11 +441,95 @@ export default function App() {
                 {cryptoIdentity.registered ? '✓ Registered (PostgreSQL)' : '❌ Not Registered'}
               </span>
             </div>
+          </div>
 
-            <div className="detail-row">
-              <span className="detail-label">Key Algorithm</span>
-              <span className="detail-value">X25519 (ECDH Key Agreement)</span>
+          {/* Local File Encryption Card (Cycle 3) */}
+          <div className="user-card">
+            <div className="user-card-header">
+              <div>
+                <h2>SecureVault — File Encryption</h2>
+                <p className="subtitle">Local AES-256-GCM Encryption with Fresh Memory DEK</p>
+              </div>
+              <button className="btn-primary" onClick={handleSelectFile} disabled={loading}>
+                Select File
+              </button>
             </div>
+
+            {selectedFile ? (
+              <>
+                <div className="detail-row">
+                  <span className="detail-label">Selected File</span>
+                  <span className="detail-value">{selectedFile.fileName} ({selectedFile.fileSize} bytes)</span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+                  <button className="btn-primary" onClick={handleEncryptFile} disabled={loading}>
+                    1. Encrypt File
+                  </button>
+
+                  {encryptResult && (
+                    <button className="btn-primary" onClick={handleDecryptFile} disabled={loading}>
+                      2. Decrypt & Verify Byte Integrity
+                    </button>
+                  )}
+
+                  {encryptResult && (
+                    <button className="btn-danger" onClick={handleRunTamperTest} disabled={loading}>
+                      3. Test Tamper Failure
+                    </button>
+                  )}
+
+                  <button className="tab-btn" onClick={handleRunDoubleEncryptTest} disabled={loading} style={{ border: '1px solid #334155' }}>
+                    4. Test Randomness (Double Encrypt)
+                  </button>
+                </div>
+
+                {encryptResult && (
+                  <div className="detail-row" style={{ marginTop: '0.75rem' }}>
+                    <span className="detail-label">Encryption</span>
+                    <span className="detail-value" style={{ color: '#10b981' }}>✓ Complete (AES-256-GCM)</span>
+                  </div>
+                )}
+
+                {decryptResult && (
+                  <div className="detail-row">
+                    <span className="detail-label">Decryption</span>
+                    <span className="detail-value" style={{ color: '#10b981' }}>✓ Complete</span>
+                  </div>
+                )}
+
+                {integrityResult && (
+                  <div className="detail-row">
+                    <span className="detail-label">Byte-for-Byte Integrity</span>
+                    <span className="detail-value" style={{ color: integrityResult.identical ? '#10b981' : '#ef4444' }}>
+                      {integrityResult.identical ? '✓ Original and decrypted files are IDENTICAL (SHA-256 match)' : '❌ Mismatched bytes!'}
+                    </span>
+                  </div>
+                )}
+
+                {tamperTestResult && (
+                  <div className="detail-row">
+                    <span className="detail-label">Tamper Auth Check</span>
+                    <span className="detail-value" style={{ color: tamperTestResult.caughtTampering ? '#10b981' : '#ef4444' }}>
+                      {tamperTestResult.caughtTampering ? `✓ Caught Tampering! Exception: "${tamperTestResult.errorMessage}"` : '❌ Failed to detect tampering!'}
+                    </span>
+                  </div>
+                )}
+
+                {doubleEncResult && (
+                  <div className="detail-row">
+                    <span className="detail-label">CSPRNG Nonce Randomness</span>
+                    <span className="detail-value" style={{ color: doubleEncResult.uniqueCiphertexts ? '#10b981' : '#ef4444' }}>
+                      {doubleEncResult.uniqueCiphertexts ? '✓ Double Encryption produced 2 unique IVs & distinct ciphertexts' : '❌ Reused IV/Ciphertext!'}
+                    </span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
+                No file selected. Click "Select File" to test local AES-256-GCM encryption.
+              </p>
+            )}
           </div>
         </div>
       )}
