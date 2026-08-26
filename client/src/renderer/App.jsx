@@ -6,7 +6,14 @@ export default function App() {
   const [token, setToken] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [currentOrg, setCurrentOrg] = useState(null);
-  
+
+  // Cycle 2 Crypto Identity state
+  const [cryptoIdentity, setCryptoIdentity] = useState({
+    protected: false,
+    registered: false,
+    publicKey: null,
+  });
+
   const [activeTab, setActiveTab] = useState('login'); // 'login' | 'register'
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
@@ -21,7 +28,47 @@ export default function App() {
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
 
-  // Auto restore session on app launch
+  // Helper to sync local identity with backend
+  const syncCryptographicIdentity = async (authToken) => {
+    if (!window.electronAPI || typeof window.electronAPI.ensureIdentity !== 'function') {
+      return;
+    }
+
+    try {
+      // 1. Ensure local X25519 identity exists in OS SafeStorage
+      const localId = await window.electronAPI.ensureIdentity();
+
+      if (localId && localId.hasIdentity) {
+        // 2. Register public key with Express backend
+        const res = await fetch(`${API_BASE}/crypto/public-key`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({ publicKey: localId.publicKey }),
+        });
+
+        if (res.ok) {
+          setCryptoIdentity({
+            protected: true,
+            registered: true,
+            publicKey: localId.publicKey,
+          });
+        } else {
+          setCryptoIdentity({
+            protected: true,
+            registered: false,
+            publicKey: localId.publicKey,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[Crypto Identity Sync Error]:', err.message);
+    }
+  };
+
+  // Auto restore session and identity on app launch
   useEffect(() => {
     async function restoreSession() {
       setInitializing(true);
@@ -43,6 +90,9 @@ export default function App() {
             setToken(savedToken);
             setCurrentUser(data.user);
             setCurrentOrg(data.organization);
+
+            // Sync cryptographic identity
+            await syncCryptographicIdentity(savedToken);
           } else {
             // Token expired or invalid
             if (window.electronAPI && typeof window.electronAPI.clearSession === 'function') {
@@ -92,6 +142,9 @@ export default function App() {
         await window.electronAPI.saveSession(data.token);
       }
 
+      // Initialize & sync local cryptographic identity
+      await syncCryptographicIdentity(data.token);
+
       setSuccessMsg('Organization and Admin account registered successfully!');
     } catch (err) {
       setError(err.message);
@@ -131,6 +184,9 @@ export default function App() {
         await window.electronAPI.saveSession(data.token);
       }
 
+      // Sync local cryptographic identity
+      await syncCryptographicIdentity(data.token);
+
       setSuccessMsg('Logged in successfully!');
     } catch (err) {
       setError(err.message);
@@ -152,6 +208,7 @@ export default function App() {
       setToken(null);
       setCurrentUser(null);
       setCurrentOrg(null);
+      setCryptoIdentity({ protected: false, registered: false, publicKey: null });
       setLoading(false);
       setSuccessMsg(null);
       setError(null);
@@ -173,7 +230,7 @@ export default function App() {
           <div className="logo-badge">SV</div>
           <div>
             <h1>SecureVault</h1>
-            <p className="subtitle">Cycle 1 — Account & Organization Management</p>
+            <p className="subtitle">Cycle 2 — Local Cryptographic Identity</p>
           </div>
         </div>
 
@@ -276,6 +333,7 @@ export default function App() {
         </div>
       ) : (
         <div className="dashboard-grid">
+          {/* User & Organization Details */}
           <div className="user-card">
             <div className="user-card-header">
               <div>
@@ -293,28 +351,37 @@ export default function App() {
             </div>
 
             <div className="detail-row">
-              <span className="detail-label">User ID</span>
-              <span className="detail-value">{currentUser.id}</span>
-            </div>
-
-            <div className="detail-row">
               <span className="detail-label">Organization Name</span>
               <span className="detail-value">{currentOrg?.name}</span>
             </div>
+          </div>
 
-            <div className="detail-row">
-              <span className="detail-label">Organization ID</span>
-              <span className="detail-value">{currentOrg?.id}</span>
+          {/* Cryptographic Identity Card (Cycle 2) */}
+          <div className="user-card">
+            <div className="user-card-header">
+              <div>
+                <h2>Cryptographic Identity</h2>
+                <p className="subtitle">Local X25519 Key Pair & OS Protection</p>
+              </div>
             </div>
 
             <div className="detail-row">
-              <span className="detail-label">Assigned Role</span>
-              <span className="detail-value">{currentUser.role}</span>
+              <span className="detail-label">Private Key Protection</span>
+              <span className="detail-value" style={{ color: '#10b981' }}>
+                {cryptoIdentity.protected ? '✓ Protected (OS SafeStorage)' : '❌ Not Protected'}
+              </span>
             </div>
 
             <div className="detail-row">
-              <span className="detail-label">Account Created</span>
-              <span className="detail-value">{new Date(currentUser.createdAt).toLocaleString()}</span>
+              <span className="detail-label">Public Identity</span>
+              <span className="detail-value" style={{ color: '#10b981' }}>
+                {cryptoIdentity.registered ? '✓ Registered (PostgreSQL)' : '❌ Not Registered'}
+              </span>
+            </div>
+
+            <div className="detail-row">
+              <span className="detail-label">Key Algorithm</span>
+              <span className="detail-value">X25519 (ECDH Key Agreement)</span>
             </div>
           </div>
         </div>
