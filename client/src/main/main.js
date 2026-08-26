@@ -1,11 +1,18 @@
 const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { generateKeyPairSync } = require('crypto');
 
 let mainWindow = null;
-const SESSION_FILE_PATH = path.join(app.getPath('userData'), 'session_token.enc');
 
-// IPC Handlers for OS-secure persistent session storage
+const SESSION_FILE_PATH = path.join(app.getPath('userData'), 'session_token.enc');
+const IDENTITY_KEY_PATH = path.join(app.getPath('userData'), 'identity_key.enc');
+const IDENTITY_PUB_PATH = path.join(app.getPath('userData'), 'identity_pub.json');
+
+// In-memory reference to unlocked private key in main process (never sent to renderer or network)
+let localPrivateKeyPem = null;
+
+// --- IPC Handlers for OS-secure persistent session storage ---
 ipcMain.handle('save-session', async (_event, token) => {
   try {
     if (!token) return false;
@@ -48,6 +55,89 @@ ipcMain.handle('clear-session', async () => {
   } catch (error) {
     console.error('[Session Clear Error]:', error.message);
     return false;
+  }
+});
+
+// --- IPC Handlers for Local Cryptographic Identity (Cycle 2) ---
+
+// Get identity status without modifying state
+ipcMain.handle('get-identity-status', async () => {
+  try {
+    const keyExists = fs.existsSync(IDENTITY_KEY_PATH);
+    const pubExists = fs.existsSync(IDENTITY_PUB_PATH);
+
+    if (keyExists && pubExists) {
+      const pubData = JSON.parse(fs.readFileSync(IDENTITY_PUB_PATH, 'utf-8'));
+      return {
+        hasIdentity: true,
+        publicKey: pubData.publicKey,
+      };
+    }
+    return {
+      hasIdentity: false,
+      publicKey: null,
+    };
+  } catch (error) {
+    console.error('[Get Identity Status Error]:', error.message);
+    return { hasIdentity: false, publicKey: null };
+  }
+});
+
+// Ensure local identity exists (retrieve existing or generate new X25519 key pair locally)
+ipcMain.handle('ensure-identity', async () => {
+  try {
+    const keyExists = fs.existsSync(IDENTITY_KEY_PATH);
+    const pubExists = fs.existsSync(IDENTITY_PUB_PATH);
+
+    if (keyExists && pubExists) {
+      // Identity exists: unlock private key securely using OS safeStorage
+      const encryptedPrivateKey = fs.readFileSync(IDENTITY_KEY_PATH);
+      if (safeStorage.isEncryptionAvailable()) {
+        localPrivateKeyPem = safeStorage.decryptString(encryptedPrivateKey);
+      } else {
+        localPrivateKeyPem = encryptedPrivateKey.toString('utf-8');
+      }
+
+      const pubData = JSON.parse(fs.readFileSync(IDENTITY_PUB_PATH, 'utf-8'));
+      return {
+        hasIdentity: true,
+        publicKey: pubData.publicKey,
+        createdNew: false,
+      };
+    }
+
+    // Identity does not exist: Generate new X25519 key pair locally
+    console.log('[Crypto] Generating new X25519 cryptographic key pair locally...');
+    const { publicKey, privateKey } = generateKeyPairSync('x25519');
+
+    const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' });
+    const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+
+    // Store private key using OS safeStorage
+    if (safeStorage.isEncryptionAvailable()) {
+      const encryptedBuffer = safeStorage.encryptString(privateKeyPem);
+      fs.writeFileSync(IDENTITY_KEY_PATH, encryptedBuffer);
+    } else {
+      fs.writeFileSync(IDENTITY_KEY_PATH, Buffer.from(privateKeyPem, 'utf-8'));
+    }
+
+    // Store public key metadata locally
+    fs.writeFileSync(IDENTITY_PUB_PATH, JSON.stringify({ publicKey: publicKeyPem }), 'utf-8');
+
+    localPrivateKeyPem = privateKeyPem;
+
+    return {
+      hasIdentity: true,
+      publicKey: publicKeyPem,
+      createdNew: true,
+    };
+  } catch (error) {
+    console.error('[Ensure Identity Error]:', error.message);
+    return {
+      hasIdentity: false,
+      publicKey: null,
+      error: error.message,
+    };
   }
 });
 
