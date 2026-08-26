@@ -1,7 +1,9 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const { initDb } = require('./db');
 const healthRouter = require('./routes/health');
+const authRouter = require('./routes/auth');
 
 dotenv.config();
 
@@ -13,12 +15,15 @@ app.use(express.json());
 
 // Routes
 app.use('/api', healthRouter);
+app.use('/api/auth', authRouter);
 
 app.get('/', (_req, res) => {
   res.json({ message: 'SecureVault Backend API' });
 });
 
-app.listen(PORT, () => {
-  console.log(`[Server] Express server running on port ${PORT}`);
-  
+// Initialize database schema and start server
+initDb().then(() => {
+  app.listen(PORT, () => {
+    console.log(`[Server] Express server running on port ${PORT}`);
+  });
 });
