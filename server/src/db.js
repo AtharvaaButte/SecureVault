@@ -51,7 +51,12 @@ async function initDb() {
       );
     `);
 
-    console.log('[DB] Database tables initialized successfully (organizations, users)');
+    // Add public_key column if it does not exist
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS public_key TEXT;
+    `);
+
+    console.log('[DB] Database tables initialized successfully (organizations, users with public_key)');
   } catch (error) {
     console.error('[DB] Database initialization error:', error.message);
   }
