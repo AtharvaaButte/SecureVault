@@ -26,4 +26,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Cycle 5 Cloud File Download & Local Decryption IPC
   downloadDecryptFile: (fileId, token) => ipcRenderer.invoke('download-decrypt-file', { fileId, token }),
+
+  // Cycle 6 E2EE File Sharing IPC
+  getOrganizationUsers: (token) => ipcRenderer.invoke('get-organization-users', token),
+  shareFile: (fileId, recipientUserId, recipientPublicKey, token) => ipcRenderer.invoke('share-file', { fileId, recipientUserId, recipientPublicKey, token }),
+  getSharedFiles: (token) => ipcRenderer.invoke('get-shared-files', token),
+  downloadDecryptSharedFile: (fileId, currentUserId, token) => ipcRenderer.invoke('download-decrypt-shared-file', { fileId, currentUserId, token }),
 });

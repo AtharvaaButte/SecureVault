@@ -3,8 +3,45 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// --- DEV PROFILE ISOLATION (development/testing only) ---
+// Launch: electron . --profile=alice   or   --profile=bob
+// Also accepted: --profile alice   and   SECUREVAULT_PROFILE=alice
+// Each profile gets its own Electron userData directory so JWT/session,
+// safeStorage-protected private keys, and identity files stay independent.
+// With no --profile argument, behaviour is unchanged.
+function resolveDevProfileName() {
+  const eqArg = process.argv.find((a) => a.startsWith('--profile='));
+  if (eqArg) return eqArg.slice('--profile='.length).trim();
+
+  const flagIndex = process.argv.indexOf('--profile');
+  if (flagIndex !== -1) {
+    const value = process.argv[flagIndex + 1];
+    if (value && !value.startsWith('-')) return value.trim();
+  }
+
+  if (process.env.SECUREVAULT_PROFILE) return process.env.SECUREVAULT_PROFILE.trim();
+  return '';
+}
+
+const requestedProfile = resolveDevProfileName();
+let devProfile = null;
+if (requestedProfile) {
+  if (!/^[A-Za-z0-9_-]+$/.test(requestedProfile)) {
+    console.error(`[Profile] Invalid --profile "${requestedProfile}". Use only letters, numbers, hyphen, or underscore.`);
+    process.exit(1);
+  }
+  const profileDir = path.join(app.getPath('userData'), 'profiles', requestedProfile);
+  fs.mkdirSync(profileDir, { recursive: true });
+  app.setPath('userData', profileDir);
+  app.setPath('sessionData', profileDir);
+  devProfile = requestedProfile;
+  console.log(`[Profile] Dev profile "${devProfile}" active.`);
+  console.log(`[Profile] userData → ${profileDir}`);
+}
+
 // Imported modules for separation of concerns
 const fileCrypto = require('./crypto/fileCrypto');
+const keyWrapping = require('./crypto/keyWrapping');
 const tempStorage = require('./storage/tempStorage');
 const fileService = require('./file/fileService');
 
@@ -13,6 +50,11 @@ let mainWindow = null;
 const SESSION_FILE_PATH = path.join(app.getPath('userData'), 'session_token.enc');
 const IDENTITY_KEY_PATH = path.join(app.getPath('userData'), 'identity_key.enc');
 const IDENTITY_PUB_PATH = path.join(app.getPath('userData'), 'identity_pub.json');
+
+if (devProfile) {
+  console.log(`[Profile] session → ${SESSION_FILE_PATH}`);
+  console.log(`[Profile] identity → ${IDENTITY_KEY_PATH}`);
+}
 
 // In-memory reference to unlocked private key (Cycle 2)
 let localPrivateKeyPem = null;
@@ -367,7 +409,153 @@ ipcMain.handle('download-decrypt-file', async (_event, { fileId, token }) => {
   }
 });
 
+// --- IPC Handlers for Cycle 6 E2EE File Sharing ---
+ipcMain.handle('get-organization-users', async (_event, token) => {
+  try {
+    const response = await fetch('http://localhost:5000/api/users', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to fetch users');
+    return { success: true, users: data.users };
+  } catch (error) {
+    console.error('[Get Users Error]:', error.message);
+    return { success: false, error: error.message, users: [] };
+  }
+});
+
+ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipientPublicKey, token }) => {
+  try {
+    if (!localPrivateKeyPem) {
+      throw new Error('Local cryptographic identity private key is unlocked or missing.');
+    }
+
+    const dek = fileCrypto.getDek(fileId);
+    if (!dek) {
+      throw new Error('File DEK is not available in the active application session memory.');
+    }
+
+    if (!fs.existsSync(IDENTITY_PUB_PATH)) {
+      throw new Error('Local public key file missing.');
+    }
+
+    const pubData = JSON.parse(fs.readFileSync(IDENTITY_PUB_PATH, 'utf-8'));
+    const senderPublicKey = pubData.publicKey;
+
+    // Perform local key wrapping: X25519 DH + HKDF-SHA-256 + AES-256-GCM + AAD
+    const wrappingPayload = keyWrapping.wrapDek(
+      dek,
+      localPrivateKeyPem,
+      recipientPublicKey,
+      fileId,
+      recipientUserId
+    );
+
+    const response = await fetch(`http://localhost:5000/api/files/${fileId}/share`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        recipientUserId,
+        senderPublicKey,
+        wrappedDek: wrappingPayload.wrappedDek,
+        wrapSalt: wrappingPayload.wrapSalt,
+        wrapIv: wrappingPayload.wrapIv,
+        wrapAuthTag: wrappingPayload.wrapAuthTag,
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to share file');
+    return { success: true, message: data.message };
+  } catch (error) {
+    console.error('[Share File Error]:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-shared-files', async (_event, token) => {
+  try {
+    const response = await fetch('http://localhost:5000/api/files/shared', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to fetch shared files');
+    return { success: true, sharedFiles: data.sharedFiles };
+  } catch (error) {
+    console.error('[Get Shared Files Error]:', error.message);
+    return { success: false, error: error.message, sharedFiles: [] };
+  }
+});
+
+ipcMain.handle('download-decrypt-shared-file', async (_event, { fileId, currentUserId, token }) => {
+  try {
+    if (!localPrivateKeyPem) {
+      throw new Error('Local cryptographic identity private key is not available.');
+    }
+
+    // 1. Fetch file payload and wrapping metadata from backend
+    const response = await fetch(`http://localhost:5000/api/files/${fileId}/download`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to download shared file payload');
+
+    const { ciphertext, metadata, wrapping } = data;
+    if (!wrapping) {
+      throw new Error('Shared file wrapping metadata is missing.');
+    }
+
+    // 2. Local DEK unwrapping: X25519 DH + HKDF-SHA-256 + AES-256-GCM + AAD
+    const unwrappedDek = keyWrapping.unwrapDek(
+      wrapping.wrappedDek,
+      wrapping.wrapSalt,
+      wrapping.wrapIv,
+      wrapping.wrapAuthTag,
+      wrapping.senderPublicKey,
+      localPrivateKeyPem,
+      fileId,
+      currentUserId
+    );
+
+    // 3. Store DEK in main-process memory
+    fileCrypto.storeDek(fileId, unwrappedDek);
+
+    // 4. Decrypt B2 ciphertext locally
+    const ciphertextBuffer = Buffer.from(ciphertext, 'base64');
+    const ivBuffer = Buffer.from(metadata.iv, 'base64');
+    const authTagBuffer = Buffer.from(metadata.authTag, 'base64');
+
+    const decryptedBuffer = fileCrypto.decryptBuffer(ciphertextBuffer, unwrappedDek, ivBuffer, authTagBuffer);
+
+    // 5. Prompt for save path & write plaintext file
+    const saveResult = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Decrypted Shared File',
+      defaultPath: metadata.originalName,
+    });
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { success: false, error: 'File save canceled by user.' };
+    }
+
+    fs.writeFileSync(saveResult.filePath, decryptedBuffer);
+
+    return {
+      success: true,
+      savedPath: saveResult.filePath,
+      originalName: metadata.originalName,
+      decryptedSize: decryptedBuffer.length,
+    };
+  } catch (error) {
+    console.error('[Download & Decrypt Shared File Error]:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
 function createWindow() {
+  const windowTitle = devProfile ? `SecureVault [${devProfile}]` : 'SecureVault';
   mainWindow = new BrowserWindow({
     width: 950,
     height: 700,
@@ -376,7 +564,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    title: 'SecureVault',
+    title: windowTitle,
   });
 
   const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
