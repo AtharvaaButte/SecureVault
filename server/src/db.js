@@ -67,7 +67,23 @@ async function initDb() {
       );
     `);
 
-    console.log('[DB] Database tables initialized successfully (organizations, users, files)');
+    // Create file_keys table for Cycle 6 (Per-user DEK Wrapping)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS file_keys (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        sender_public_key TEXT NOT NULL,
+        wrapped_dek TEXT NOT NULL,
+        wrap_salt TEXT NOT NULL,
+        wrap_iv TEXT NOT NULL,
+        wrap_auth_tag TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(file_id, user_id)
+      );
+    `);
+
+    console.log('[DB] Database tables initialized successfully (organizations, users, files, file_keys)');
   } catch (error) {
     console.error('[DB] Database initialization error:', error.message);
   }
