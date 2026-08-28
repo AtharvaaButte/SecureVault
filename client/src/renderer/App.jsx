@@ -25,12 +25,13 @@ export default function App() {
   const [fileList, setFileList] = useState([]);
   const [downloadStatus, setDownloadStatus] = useState({});
 
-  // Cycle 6 E2EE File Sharing state
+  // Cycle 6 & 7 E2EE File Sharing & Access Control state
   const [sharedFileList, setSharedFileList] = useState([]);
   const [orgUsers, setOrgUsers] = useState([]);
   const [shareRecipients, setShareRecipients] = useState({});
   const [shareStatus, setShareStatus] = useState({});
   const [sharedDownloadStatus, setSharedDownloadStatus] = useState({});
+  const [fileShares, setFileShares] = useState({});
 
   const [activeTab, setActiveTab] = useState('login'); // 'login' | 'register'
   const [loading, setLoading] = useState(false);
@@ -50,18 +51,51 @@ export default function App() {
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
 
-  // Fetch current user's file listing (Cycle 4)
-  const fetchUserFiles = async (authToken) => {
+  // Fetch active recipient shares for a given owned file (Cycle 7)
+  const fetchFileShares = async (fileId, authToken = token) => {
+    if (!window.electronAPI || typeof window.electronAPI.getFileShares !== 'function' || !authToken) return;
     try {
-      const res = await fetch(`${API_BASE}/files`, {
-        headers: { 'Authorization': `Bearer ${authToken}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setFileList(data.files || []);
+      const res = await window.electronAPI.getFileShares(fileId, authToken);
+      if (res.success) {
+        setFileShares((prev) => ({ ...prev, [fileId]: res.shares || [] }));
       }
     } catch (err) {
-      console.error('[Fetch Files Error]:', err.message);
+      console.error('[Fetch File Shares Error]:', err.message);
+    }
+  };
+
+  // Fetch current user's file listing (Cycle 4 + 7)
+  const fetchUserFiles = async (authToken) => {
+    let files = [];
+    if (window.electronAPI && typeof window.electronAPI.getUserFiles === 'function') {
+      try {
+        const res = await window.electronAPI.getUserFiles(authToken);
+        if (res.success) {
+          files = res.files || [];
+        }
+      } catch (err) {
+        console.error('[Fetch User Files IPC Error]:', err.message);
+      }
+    } else {
+      try {
+        const res = await fetch(`${API_BASE}/files`, {
+          headers: { 'Authorization': `Bearer ${authToken}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          files = data.files || [];
+        }
+      } catch (err) {
+        console.error('[Fetch Files Error]:', err.message);
+      }
+    }
+
+    setFileList(files);
+
+    if (files.length > 0) {
+      for (const f of files) {
+        fetchFileShares(f.id, authToken);
+      }
     }
   };
 
@@ -80,8 +114,8 @@ export default function App() {
   };
 
   // Fetch directory of other users in organization for sharing (Cycle 6)
-  const fetchOrgUsers = async (authToken) => {
-    if (!window.electronAPI || typeof window.electronAPI.getOrganizationUsers !== 'function') return;
+  const fetchOrgUsers = async (authToken = token) => {
+    if (!window.electronAPI || typeof window.electronAPI.getOrganizationUsers !== 'function' || !authToken) return;
     try {
       const res = await window.electronAPI.getOrganizationUsers(authToken);
       if (res.success) {
@@ -267,13 +301,12 @@ export default function App() {
 
   const handleCreateUser = async (e) => {
     e.preventDefault();
-    if (!token) return;
     setLoading(true);
     setError(null);
     setSuccessMsg(null);
 
     try {
-      const res = await fetch(`${API_BASE}/users`, {
+      const res = await fetch(`${API_BASE}/users/members`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -282,6 +315,7 @@ export default function App() {
         body: JSON.stringify({
           email: newUserEmail,
           password: newUserPassword,
+          role: 'USER',
         }),
       });
 
@@ -290,8 +324,9 @@ export default function App() {
 
       setNewUserEmail('');
       setNewUserPassword('');
+      setSuccessMsg(`User ${data.user.email} created successfully.`);
       await fetchOrgMembers(token);
-      setSuccessMsg(`User created: ${data.user.email}`);
+      await fetchOrgUsers(token);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -318,8 +353,7 @@ export default function App() {
       setSharedFileList([]);
       setOrgUsers([]);
       setOrgMembers([]);
-      setNewUserEmail('');
-      setNewUserPassword('');
+      setFileShares({});
       setSuccessMsg('Logged out successfully.');
     } catch (err) {
       console.error('[Logout Error]:', err.message);
@@ -429,7 +463,7 @@ export default function App() {
 
     const recipient = orgUsers.find((u) => u.id === recipientUserId);
     if (!recipient || !recipient.publicKey) {
-      setShareStatus((prev) => ({ ...prev, [fileId]: { error: 'Selected recipient does not have a public key.' } }));
+      setShareStatus((prev) => ({ ...prev, [fileId]: { error: 'Selected recipient does not have a public key registered yet.' } }));
       return;
     }
 
@@ -441,6 +475,22 @@ export default function App() {
       setShareStatus((prev) => ({ ...prev, [fileId]: { loading: false, error: res.error } }));
     } else {
       setShareStatus((prev) => ({ ...prev, [fileId]: { loading: false, success: `✓ File shared with ${recipient.email}!` } }));
+      await fetchFileShares(fileId, token);
+    }
+  };
+
+  // Cycle 7 Revoke Share Handler
+  const handleRevokeShare = async (fileId, recipientUserId) => {
+    if (!token || !window.electronAPI) return;
+    setShareStatus((prev) => ({ ...prev, [fileId]: { loading: true, error: null, success: null } }));
+
+    const res = await window.electronAPI.revokeFileShare(fileId, recipientUserId, token);
+
+    if (!res.success) {
+      setShareStatus((prev) => ({ ...prev, [fileId]: { loading: false, error: res.error } }));
+    } else {
+      setShareStatus((prev) => ({ ...prev, [fileId]: { loading: false, success: '✓ Share permission revoked successfully.' } }));
+      await fetchFileShares(fileId, token);
     }
   };
 
@@ -650,18 +700,18 @@ export default function App() {
               </form>
 
               {orgMembers.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
                   {orgMembers.map((member) => (
                     <div key={member.id} className="detail-row">
                       <span className="detail-label">{member.email}</span>
                       <span className="detail-value">
-                        {member.role}{member.hasPublicKey ? '' : ' · no identity yet'}
+                        {member.role}{member.hasPublicKey ? ' · Identity Registered' : ' · Key Pending'}
                       </span>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
+                <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.5rem' }}>
                   No organization users loaded.
                 </p>
               )}
@@ -744,12 +794,12 @@ export default function App() {
             )}
           </div>
 
-          {/* Persistent Cloud File Listing Card (Cycle 4 + 5 + 6 Sharing) */}
+          {/* Persistent Cloud File Listing Card (Owner Controls: Share & Revoke) */}
           <div className="user-card">
             <div className="user-card-header">
               <div>
                 <h2>Your Uploaded Encrypted Files</h2>
-                <p className="subtitle">Backblaze B2 Storage & E2EE Sharing</p>
+                <p className="subtitle">Backblaze B2 Storage & Access Control (Owner ONLY)</p>
               </div>
               <button className="tab-btn" onClick={() => fetchUserFiles(token)} style={{ border: '1px solid #334155' }}>
                 Refresh List
@@ -761,12 +811,13 @@ export default function App() {
                 {fileList.map((file) => {
                   const status = downloadStatus[file.id] || {};
                   const sStatus = shareStatus[file.id] || {};
+                  const activeShares = fileShares[file.id] || [];
                   return (
                     <div key={file.id} style={{ padding: '0.75rem', borderRadius: '8px', backgroundColor: '#0f172a', border: '1px solid #334155' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                         <div>
                           <div style={{ fontWeight: 'bold', fontSize: '0.95rem' }}>{file.originalName}</div>
-                          <div className="subtitle">{file.originalSize} bytes</div>
+                          <div className="subtitle">{file.originalSize} bytes · Owner: You</div>
                         </div>
                         <button
                           className="btn-primary"
@@ -778,12 +829,13 @@ export default function App() {
                         </button>
                       </div>
 
-                      {/* E2EE Sharing Section */}
+                      {/* E2EE Share Controls (Owner Only) */}
                       <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px dashed #334155', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         <select
                           style={{ flex: 1, padding: '0.35rem', borderRadius: '4px', backgroundColor: '#1e293b', color: '#f8fafc', border: '1px solid #475569', fontSize: '0.85rem' }}
                           value={shareRecipients[file.id] || ''}
                           onChange={(e) => setShareRecipients({ ...shareRecipients, [file.id]: e.target.value })}
+                          onFocus={() => fetchOrgUsers(token)}
                         >
                           <option value="">Select user to share with...</option>
                           {orgUsers.map((user) => (
@@ -799,6 +851,30 @@ export default function App() {
                           {sStatus.loading ? 'Wrapping...' : 'Share File'}
                         </button>
                       </div>
+
+                      {/* Active Shares & Revocation Section (Owner Only) */}
+                      {activeShares.length > 0 && (
+                        <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #1e293b' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.3rem', fontWeight: '600' }}>
+                            Currently Shared With:
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                            {activeShares.map((share) => (
+                              <div key={share.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1e293b', padding: '0.35rem 0.5rem', borderRadius: '4px', fontSize: '0.82rem' }}>
+                                <span style={{ color: '#e2e8f0' }}>{share.email}</span>
+                                <button
+                                  className="btn-primary"
+                                  style={{ backgroundColor: '#ef4444', padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                  disabled={sStatus.loading}
+                                  onClick={() => handleRevokeShare(file.id, share.userId)}
+                                >
+                                  Revoke Access
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {sStatus.success && (
                         <div style={{ fontSize: '0.8rem', color: '#10b981', marginTop: '0.4rem', backgroundColor: '#064e3b', padding: '0.3rem 0.5rem', borderRadius: '4px' }}>
@@ -832,7 +908,7 @@ export default function App() {
             )}
           </div>
 
-          {/* Files Shared With Me Card (Cycle 6) */}
+          {/* Files Shared With Me Card (Recipient Access ONLY - NO Share / Revoke Controls) */}
           <div className="user-card">
             <div className="user-card-header">
               <div>
