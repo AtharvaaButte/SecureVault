@@ -316,7 +316,7 @@ ipcMain.handle('test-double-encryption', async (_event, filePath) => {
   }
 });
 
-// --- IPC Handler for Cloud Ciphertext Upload (Cycle 4) ---
+// --- IPC Handler for Cloud Ciphertext Upload (Cycle 4 + Persistent DEK Recovery) ---
 ipcMain.handle('upload-ciphertext', async (_event, { fileId, token }) => {
   try {
     const tempDir = tempStorage.getTempDir(app);
@@ -331,6 +331,29 @@ ipcMain.handle('upload-ciphertext', async (_event, { fileId, token }) => {
     formData.append('iv', metadata.iv);
     formData.append('authTag', metadata.authTag);
     formData.append('algorithm', metadata.algorithm);
+
+    // Wrap DEK for owner so the owner can recover DEK after application restart
+    const dek = fileCrypto.getDek(fileId);
+    if (localPrivateKeyPem && fs.existsSync(IDENTITY_PUB_PATH) && dek) {
+      const pubData = JSON.parse(fs.readFileSync(IDENTITY_PUB_PATH, 'utf-8'));
+      const ownerPublicKey = pubData.publicKey;
+      const tokenPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      const ownerUserId = tokenPayload.userId;
+
+      const ownerWrapping = keyWrapping.wrapDek(
+        dek,
+        localPrivateKeyPem,
+        ownerPublicKey,
+        fileId,
+        ownerUserId
+      );
+
+      formData.append('wrappedDek', ownerWrapping.wrappedDek);
+      formData.append('wrapSalt', ownerWrapping.wrapSalt);
+      formData.append('wrapIv', ownerWrapping.wrapIv);
+      formData.append('wrapAuthTag', ownerWrapping.wrapAuthTag);
+      formData.append('senderPublicKey', ownerPublicKey);
+    }
 
     const response = await fetch('http://localhost:5000/api/files/upload', {
       method: 'POST',
@@ -352,7 +375,7 @@ ipcMain.handle('upload-ciphertext', async (_event, { fileId, token }) => {
   }
 });
 
-// --- IPC Handler for Cloud File Download & Local Decryption (Cycle 5) ---
+// --- IPC Handler for Cloud File Download & Local Decryption (Cycle 5 + Persistent DEK Recovery) ---
 ipcMain.handle('download-decrypt-file', async (_event, { fileId, token }) => {
   try {
     // 1. Fetch encrypted ciphertext + metadata from Express backend
@@ -367,18 +390,37 @@ ipcMain.handle('download-decrypt-file', async (_event, { fileId, token }) => {
       throw new Error(data.message || 'Failed to download encrypted file from cloud');
     }
 
-    const { ciphertext, metadata } = data;
+    const { ciphertext, metadata, wrapping } = data;
     const ciphertextBuffer = Buffer.from(ciphertext, 'base64');
     const iv = Buffer.from(metadata.iv, 'base64');
     const authTag = Buffer.from(metadata.authTag, 'base64');
 
-    // 2. Retrieve DEK from Electron main-process memory (DEK Lifetime Constraint)
-    const dek = fileCrypto.getDek(fileId);
+    // 2. Retrieve DEK from Electron main-process memory or recover from backend wrapped key
+    let dek = fileCrypto.getDek(fileId);
     if (!dek) {
-      return {
-        success: false,
-        error: 'No in-memory DEK found for this file. (Key wrapping and persistent key management will be implemented in a future cycle)',
-      };
+      if (!wrapping) {
+        throw new Error('No in-memory DEK found for this file and no wrapped key available on server.');
+      }
+      if (!localPrivateKeyPem) {
+        throw new Error('Local cryptographic identity private key is not unlocked.');
+      }
+
+      const tokenPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      const currentUserId = tokenPayload.userId;
+
+      dek = keyWrapping.unwrapDek(
+        wrapping.wrappedDek,
+        wrapping.wrapSalt,
+        wrapping.wrapIv,
+        wrapping.wrapAuthTag,
+        wrapping.senderPublicKey,
+        localPrivateKeyPem,
+        fileId,
+        currentUserId
+      );
+
+      fileCrypto.storeDek(fileId, dek);
+      console.log(`[DEK Recovery] Successfully recovered DEK for file ${fileId} and stored in memory.`);
     }
 
     // 3. Decrypt ciphertext locally with AES-256-GCM
@@ -409,6 +451,21 @@ ipcMain.handle('download-decrypt-file', async (_event, { fileId, token }) => {
   }
 });
 
+// --- IPC Handlers for Cycle 4+ File Listing & Access Control ---
+ipcMain.handle('get-user-files', async (_event, token) => {
+  try {
+    const response = await fetch('http://localhost:5000/api/files', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to fetch user files');
+    return { success: true, files: data.files };
+  } catch (error) {
+    console.error('[Get User Files Error]:', error.message);
+    return { success: false, error: error.message, files: [] };
+  }
+});
+
 // --- IPC Handlers for Cycle 6 E2EE File Sharing ---
 ipcMain.handle('get-organization-users', async (_event, token) => {
   try {
@@ -430,9 +487,35 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
       throw new Error('Local cryptographic identity private key is unlocked or missing.');
     }
 
-    const dek = fileCrypto.getDek(fileId);
+    let dek = fileCrypto.getDek(fileId);
+
+    // DEK Recovery for Share: If DEK is missing in memory (e.g. after app restart), recover it from backend wrapped owner DEK
     if (!dek) {
-      throw new Error('File DEK is not available in the active application session memory.');
+      console.log(`[DEK Recovery for Share] DEK missing from memory for file ${fileId}. Fetching owner wrapped key...`);
+      const dlRes = await fetch(`http://localhost:5000/api/files/${fileId}/download`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const dlData = await dlRes.json();
+      if (!dlRes.ok || !dlData.wrapping) {
+        throw new Error(dlData.message || 'File DEK is not available in session memory and wrapped key retrieval failed.');
+      }
+
+      const tokenPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+      const currentUserId = tokenPayload.userId;
+
+      dek = keyWrapping.unwrapDek(
+        dlData.wrapping.wrappedDek,
+        dlData.wrapping.wrapSalt,
+        dlData.wrapping.wrapIv,
+        dlData.wrapping.wrapAuthTag,
+        dlData.wrapping.senderPublicKey,
+        localPrivateKeyPem,
+        fileId,
+        currentUserId
+      );
+
+      fileCrypto.storeDek(fileId, dek);
+      console.log(`[DEK Recovery for Share] Successfully recovered DEK for file ${fileId} from owner wrapped key.`);
     }
 
     if (!fs.existsSync(IDENTITY_PUB_PATH)) {
@@ -442,7 +525,7 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
     const pubData = JSON.parse(fs.readFileSync(IDENTITY_PUB_PATH, 'utf-8'));
     const senderPublicKey = pubData.publicKey;
 
-    // Perform local key wrapping: X25519 DH + HKDF-SHA-256 + AES-256-GCM + AAD
+    // Perform local key wrapping for recipient: X25519 DH + HKDF-SHA-256 + AES-256-GCM + AAD
     const wrappingPayload = keyWrapping.wrapDek(
       dek,
       localPrivateKeyPem,
@@ -473,6 +556,35 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
   } catch (error) {
     console.error('[Share File Error]:', error.message);
     return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('revoke-file-share', async (_event, { fileId, recipientUserId, token }) => {
+  try {
+    const response = await fetch(`http://localhost:5000/api/files/${fileId}/share/${recipientUserId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to revoke share');
+    return { success: true, message: data.message };
+  } catch (error) {
+    console.error('[Revoke Share Error]:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-file-shares', async (_event, { fileId, token }) => {
+  try {
+    const response = await fetch(`http://localhost:5000/api/files/${fileId}/shares`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to fetch shares');
+    return { success: true, shares: data.shares };
+  } catch (error) {
+    console.error('[Get Shares Error]:', error.message);
+    return { success: false, error: error.message, shares: [] };
   }
 });
 

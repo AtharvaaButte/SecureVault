@@ -23,13 +23,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Cycle 4 Cloud Ciphertext Upload IPC
   uploadCiphertext: (fileId, token) => ipcRenderer.invoke('upload-ciphertext', { fileId, token }),
+  getUserFiles: (token) => ipcRenderer.invoke('get-user-files', token),
 
   // Cycle 5 Cloud File Download & Local Decryption IPC
   downloadDecryptFile: (fileId, token) => ipcRenderer.invoke('download-decrypt-file', { fileId, token }),
 
-  // Cycle 6 E2EE File Sharing IPC
+  // Cycle 6 & 7 E2EE File Sharing & Access Control IPC
   getOrganizationUsers: (token) => ipcRenderer.invoke('get-organization-users', token),
   shareFile: (fileId, recipientUserId, recipientPublicKey, token) => ipcRenderer.invoke('share-file', { fileId, recipientUserId, recipientPublicKey, token }),
+  revokeFileShare: (fileId, recipientUserId, token) => ipcRenderer.invoke('revoke-file-share', { fileId, recipientUserId, token }),
+  getFileShares: (fileId, token) => ipcRenderer.invoke('get-file-shares', { fileId, token }),
   getSharedFiles: (token) => ipcRenderer.invoke('get-shared-files', token),
   downloadDecryptSharedFile: (fileId, currentUserId, token) => ipcRenderer.invoke('download-decrypt-shared-file', { fileId, currentUserId, token }),
 });
