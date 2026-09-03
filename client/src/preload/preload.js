@@ -21,18 +21,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testTamper: (fileId) => ipcRenderer.invoke('test-tamper-decryption', fileId),
   testDoubleEncrypt: (filePath) => ipcRenderer.invoke('test-double-encryption', filePath),
 
-  // Cycle 4 Cloud Ciphertext Upload IPC
-  uploadCiphertext: (fileId, token) => ipcRenderer.invoke('upload-ciphertext', { fileId, token }),
+  // Cycle 4 Cloud Ciphertext Upload IPC (Phase 9D with sensitivityLevel & reauthPassword)
+  uploadCiphertext: (payload) => ipcRenderer.invoke('upload-ciphertext', payload),
   getUserFiles: (token) => ipcRenderer.invoke('get-user-files', token),
 
-  // Cycle 5 Cloud File Download & Local Decryption IPC
-  downloadDecryptFile: (fileId, token) => ipcRenderer.invoke('download-decrypt-file', { fileId, token }),
+  // Cycle 5 Cloud File Download & Local Decryption IPC (Phase 9D with reauthPassword)
+  downloadDecryptFile: (payload) => ipcRenderer.invoke('download-decrypt-file', payload),
 
-  // Cycle 6 & 7 E2EE File Sharing & Access Control IPC
+  // Cycle 6 & 7 & 9 E2EE File Sharing, Access Control & Risk-Based IPC
   getOrganizationUsers: (token) => ipcRenderer.invoke('get-organization-users', token),
-  shareFile: (fileId, recipientUserId, recipientPublicKey, token) => ipcRenderer.invoke('share-file', { fileId, recipientUserId, recipientPublicKey, token }),
-  revokeFileShare: (fileId, recipientUserId, token) => ipcRenderer.invoke('revoke-file-share', { fileId, recipientUserId, token }),
+  shareFile: (payload) => ipcRenderer.invoke('share-file', payload),
+  revokeFileShare: (payload) => ipcRenderer.invoke('revoke-file-share', payload),
   getFileShares: (fileId, token) => ipcRenderer.invoke('get-file-shares', { fileId, token }),
   getSharedFiles: (token) => ipcRenderer.invoke('get-shared-files', token),
-  downloadDecryptSharedFile: (fileId, currentUserId, token) => ipcRenderer.invoke('download-decrypt-shared-file', { fileId, currentUserId, token }),
+  downloadDecryptSharedFile: (payload) => ipcRenderer.invoke('download-decrypt-shared-file', payload),
+  getUserPermissions: (token) => ipcRenderer.invoke('get-user-permissions', token),
 });
