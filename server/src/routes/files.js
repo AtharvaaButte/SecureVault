@@ -5,6 +5,8 @@ const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 const { requirePermission, requireFileAccess } = require('../middleware/authorize');
 const { uploadToB2, getFromB2 } = require('../storage/s3Client');
+const auditService = require('../services/auditService');
+const geoService = require('../services/geoService');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -72,6 +74,21 @@ router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.sin
         [fileId, ownerId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag]
       );
     }
+
+    // Audit Event Recording (Cycle 10.6)
+    const location = geoService.extractLocation(req);
+    await auditService.recordAuditEvent({
+      organizationId: req.user.orgId,
+      userId: ownerId,
+      userEmail: req.user.email,
+      eventType: 'UPLOAD',
+      action: 'ALLOW',
+      resourceId: fileId,
+      ipAddress: location.ip,
+      locationLabel: location.regionLabel,
+      deviceId: req.headers['x-client-device-id'] || 'electron-default-device',
+      reason: `Uploaded file ${originalName} (Sensitivity: ${normalizedSensitivity}).`,
+    });
 
     res.status(201).json({
       message: 'File ciphertext uploaded successfully to B2.',
@@ -206,7 +223,7 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
 
     // 1. Verify recipient exists and check organization boundary
     const recipientResult = await pool.query(
-      'SELECT id, organization_id, public_key FROM users WHERE id = $1',
+      'SELECT id, email, organization_id, public_key FROM users WHERE id = $1',
       [recipientUserId]
     );
 
@@ -240,6 +257,21 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
       [fileId, recipientUserId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag]
     );
 
+    // Audit Event Recording
+    const location = geoService.extractLocation(req);
+    await auditService.recordAuditEvent({
+      organizationId: req.user.orgId,
+      userId: req.user.userId,
+      userEmail: req.user.email,
+      eventType: 'SHARE',
+      action: 'ALLOW',
+      resourceId: fileId,
+      ipAddress: location.ip,
+      locationLabel: location.regionLabel,
+      deviceId: req.headers['x-client-device-id'] || 'electron-default-device',
+      reason: `Shared file ${fileId} with recipient ${recipient.email}.`,
+    });
+
     res.status(201).json({
       message: 'File shared successfully with recipient.',
       fileId,
@@ -266,6 +298,21 @@ router.delete('/:id/share/:recipientUserId', verifyToken, requireFileAccess('REV
     if (deleteResult.rows.length === 0) {
       return res.status(404).json({ message: 'Share record not found for this user.' });
     }
+
+    // Audit Event Recording
+    const location = geoService.extractLocation(req);
+    await auditService.recordAuditEvent({
+      organizationId: req.user.orgId,
+      userId: req.user.userId,
+      userEmail: req.user.email,
+      eventType: 'REVOKE',
+      action: 'ALLOW',
+      resourceId: fileId,
+      ipAddress: location.ip,
+      locationLabel: location.regionLabel,
+      deviceId: req.headers['x-client-device-id'] || 'electron-default-device',
+      reason: `Revoked share access for user ${recipientUserId} on file ${fileId}.`,
+    });
 
     res.json({
       message: 'Share permission revoked successfully.',
@@ -304,6 +351,21 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
     if (!ciphertextBuffer) {
       return res.status(404).json({ message: 'Ciphertext object not found in B2 storage.' });
     }
+
+    // Audit Event Recording
+    const location = geoService.extractLocation(req);
+    await auditService.recordAuditEvent({
+      organizationId: req.user.orgId,
+      userId: currentUserId,
+      userEmail: req.user.email,
+      eventType: 'DOWNLOAD',
+      action: 'ALLOW',
+      resourceId: fileId,
+      ipAddress: location.ip,
+      locationLabel: location.regionLabel,
+      deviceId: req.headers['x-client-device-id'] || 'electron-default-device',
+      reason: `Downloaded file ${fileRecord.original_name} (Sensitivity: ${fileRecord.sensitivity_level}).`,
+    });
 
     // Return base64 ciphertext and encryption metadata
     const responsePayload = {

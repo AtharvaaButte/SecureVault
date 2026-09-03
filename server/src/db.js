@@ -169,6 +169,26 @@ async function initDb() {
       );
     `);
 
+    // 11. Audit Logs Table (Cycle 10.6 Tamper-Evident Audit Logs with Hash Chain)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        user_email VARCHAR(255),
+        event_type VARCHAR(100) NOT NULL,
+        action VARCHAR(50) NOT NULL,
+        resource_id VARCHAR(255),
+        ip_address VARCHAR(100),
+        location_label VARCHAR(255),
+        device_id VARCHAR(255),
+        reason TEXT,
+        previous_hash VARCHAR(64) NOT NULL,
+        current_hash VARCHAR(64) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Seed Standard System Permissions (Administrative vs File Permissions)
     const standardPermissions = [
       ['FILE_READ', 'Download and decrypt owned or explicitly shared files'],
@@ -189,7 +209,7 @@ async function initDb() {
       );
     }
 
-    console.log('[DB] Database schema and Cycle 10.2/10.3 organization_policies initialized successfully.');
+    console.log('[DB] Database schema, Cycle 10.2/10.3 policies, and Cycle 10.6 audit_logs initialized successfully.');
   } catch (error) {
     console.error('[DB] Database initialization error:', error.message);
   }

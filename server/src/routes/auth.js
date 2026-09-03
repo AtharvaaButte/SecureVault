@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 const rbacService = require('../services/rbacService');
+const auditService = require('../services/auditService');
+const geoService = require('../services/geoService');
 
 const router = express.Router();
 
@@ -25,8 +27,7 @@ router.post('/register', async (req, res) => {
   const deviceId = req.headers['x-client-device-id'] || req.body.deviceId || 'electron-default-device';
   const devicePlatform = req.headers['x-client-platform'] || 'Electron-Windows';
   const userAgent = req.headers['user-agent'] || 'SecureVault-Electron-Client';
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
-  const region = (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.')) ? 'LOCAL/DEV' : 'EXTERNAL/REGION';
+  const location = geoService.extractLocation(req);
 
   const client = await pool.connect();
   try {
@@ -64,14 +65,28 @@ router.post('/register', async (req, res) => {
     // Register initial trusted device in user_devices table
     await client.query(
       `INSERT INTO user_devices 
-        (user_id, device_id, device_platform, user_agent, last_ip, last_region, is_trusted)
-       VALUES ($1, $2, $3, $4, $5, $6, true)
+        (user_id, device_id, device_platform, user_agent, last_ip, last_region, last_country, last_state, last_city, is_trusted)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
        ON CONFLICT (user_id, device_id) DO UPDATE SET
          last_ip = EXCLUDED.last_ip, last_region = EXCLUDED.last_region, last_seen_at = CURRENT_TIMESTAMP`,
-      [user.id, deviceId, devicePlatform, userAgent, ip, region]
+      [user.id, deviceId, devicePlatform, userAgent, location.ip, location.regionLabel, location.country, location.state, location.city]
     );
 
     await client.query('COMMIT');
+
+    // Audit Event Recording (Cycle 10.6)
+    await auditService.recordAuditEvent({
+      organizationId: org.id,
+      userId: user.id,
+      userEmail: user.email,
+      eventType: 'REGISTER',
+      action: 'ALLOW',
+      resourceId: org.id,
+      ipAddress: location.ip,
+      locationLabel: location.regionLabel,
+      deviceId,
+      reason: 'Organization registered and initial Admin account created.',
+    });
 
     const token = generateToken({
       userId: user.id,
@@ -117,8 +132,7 @@ router.post('/login', async (req, res) => {
   const deviceId = req.headers['x-client-device-id'] || req.body.deviceId || 'electron-default-device';
   const devicePlatform = req.headers['x-client-platform'] || 'Electron-Windows';
   const userAgent = req.headers['user-agent'] || 'SecureVault-Electron-Client';
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
-  const region = (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.')) ? 'LOCAL/DEV' : 'EXTERNAL/REGION';
+  const location = geoService.extractLocation(req);
 
   try {
     const result = await pool.query(
@@ -139,18 +153,44 @@ router.post('/login', async (req, res) => {
     // Verify password hash using Argon2id
     const isValidPassword = await argon2.verify(user.password_hash, password);
     if (!isValidPassword) {
+      await auditService.recordAuditEvent({
+        organizationId: user.organization_id,
+        userId: user.id,
+        userEmail: user.email,
+        eventType: 'LOGIN_FAILED',
+        action: 'DENY',
+        resourceId: null,
+        ipAddress: location.ip,
+        locationLabel: location.regionLabel,
+        deviceId,
+        reason: 'Invalid email or password.',
+      });
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
     // Register/update trusted device in user_devices table on successful password authentication
     await pool.query(
       `INSERT INTO user_devices 
-        (user_id, device_id, device_platform, user_agent, last_ip, last_region, is_trusted)
-       VALUES ($1, $2, $3, $4, $5, $6, true)
+        (user_id, device_id, device_platform, user_agent, last_ip, last_region, last_country, last_state, last_city, is_trusted)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
        ON CONFLICT (user_id, device_id) DO UPDATE SET
          last_ip = EXCLUDED.last_ip, last_region = EXCLUDED.last_region, last_seen_at = CURRENT_TIMESTAMP`,
-      [user.id, deviceId, devicePlatform, userAgent, ip, region]
+      [user.id, deviceId, devicePlatform, userAgent, location.ip, location.regionLabel, location.country, location.state, location.city]
     );
+
+    // Audit Successful Login
+    await auditService.recordAuditEvent({
+      organizationId: user.organization_id,
+      userId: user.id,
+      userEmail: user.email,
+      eventType: 'LOGIN',
+      action: 'ALLOW',
+      resourceId: null,
+      ipAddress: location.ip,
+      locationLabel: location.regionLabel,
+      deviceId,
+      reason: 'User authentication successful.',
+    });
 
     const token = generateToken({
       userId: user.id,
