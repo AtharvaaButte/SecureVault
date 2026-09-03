@@ -127,7 +127,7 @@ async function initDb() {
       );
     `);
 
-    // 9. User Devices Table (Phase 9C Context-Aware & Risk-Based Access)
+    // 9. User Devices Table (Phase 9C/10.3 Context & Geo Tracking)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_devices (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -137,10 +137,35 @@ async function initDb() {
         user_agent TEXT,
         last_ip VARCHAR(100),
         last_region VARCHAR(100),
+        last_country VARCHAR(10) DEFAULT 'IN',
+        last_state VARCHAR(100) DEFAULT 'Maharashtra',
+        last_city VARCHAR(100) DEFAULT 'Mumbai',
         is_trusted BOOLEAN NOT NULL DEFAULT true,
         first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, device_id)
+      );
+    `);
+
+    await pool.query(`
+      ALTER TABLE user_devices ADD COLUMN IF NOT EXISTS last_country VARCHAR(10) DEFAULT 'IN';
+      ALTER TABLE user_devices ADD COLUMN IF NOT EXISTS last_state VARCHAR(100) DEFAULT 'Maharashtra';
+      ALTER TABLE user_devices ADD COLUMN IF NOT EXISTS last_city VARCHAR(100) DEFAULT 'Mumbai';
+    `);
+
+    // 10. Organization Policies Table (Cycle 10.2 Organization Security Policies)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS organization_policies (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID UNIQUE NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        allowed_country VARCHAR(10) NOT NULL DEFAULT 'IN',
+        allowed_state VARCHAR(100) NOT NULL DEFAULT 'ALL',
+        allowed_city VARCHAR(100) NOT NULL DEFAULT 'ALL',
+        require_stepup_new_location BOOLEAN NOT NULL DEFAULT true,
+        require_stepup_sensitive_file BOOLEAN NOT NULL DEFAULT true,
+        enforce_geo_fencing BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
@@ -164,7 +189,7 @@ async function initDb() {
       );
     }
 
-    console.log('[DB] Database schema and system permissions initialized successfully for Cycle 10.1.');
+    console.log('[DB] Database schema and Cycle 10.2/10.3 organization_policies initialized successfully.');
   } catch (error) {
     console.error('[DB] Database initialization error:', error.message);
   }

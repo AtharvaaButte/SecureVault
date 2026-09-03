@@ -43,6 +43,9 @@ export default function App() {
   const [newRoleDesc, setNewRoleDesc] = useState('');
   const [newRolePerms, setNewRolePerms] = useState([]);
 
+  // Cycle 10.2 & 10.3 Organization Security Policies & Geo-Context state
+  const [orgPolicy, setOrgPolicy] = useState(null);
+
   // Phase 9C/9D Risk & Security Panel state
   const [showSecurityPanel, setShowSecurityPanel] = useState(false);
   const [stepUpModal, setStepUpModal] = useState({ show: false, reason: '', pendingAction: null });
@@ -199,6 +202,46 @@ export default function App() {
     }
   };
 
+  // Fetch Organization Security Policy (Cycle 10.2)
+  const fetchOrgPolicy = async (authToken = token) => {
+    try {
+      const res = await fetch(`${API_BASE}/policies`, {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOrgPolicy(data.policy);
+      }
+    } catch (err) {
+      console.error('[Fetch Org Policy Error]:', err.message);
+    }
+  };
+
+  // Update Organization Security Policy (Cycle 10.2)
+  const handleUpdatePolicy = async (newPolicyFields) => {
+    setLoading(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const res = await fetch(`${API_BASE}/policies`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(newPolicyFields),
+      });
+
+      const data = await parseJsonResponse(res, 'Failed to update organization security policy');
+      setOrgPolicy(data.policy);
+      setSuccessMsg('Organization security policy updated successfully.');
+    } catch (err) {
+      setError(`[Policy Update Error]: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Fetch directory of other users in organization for sharing (Cycle 6)
   const fetchOrgUsers = async (authToken = token) => {
     if (!window.electronAPI || typeof window.electronAPI.getOrganizationUsers !== 'function' || !authToken) return;
@@ -278,6 +321,7 @@ export default function App() {
               await fetchOrgMembers(storedToken);
               await fetchOrgRoles(storedToken);
               await fetchAllPermissions(storedToken);
+              await fetchOrgPolicy(storedToken);
             } else {
               await window.electronAPI.clearSession();
             }
@@ -326,6 +370,7 @@ export default function App() {
       await fetchOrgMembers(data.token);
       await fetchOrgRoles(data.token);
       await fetchAllPermissions(data.token);
+      await fetchOrgPolicy(data.token);
       setSuccessMsg('Account registered and cryptographic identity keys generated!');
     } catch (err) {
       setError(err.message);
@@ -367,6 +412,7 @@ export default function App() {
       await fetchOrgMembers(data.token);
       await fetchOrgRoles(data.token);
       await fetchAllPermissions(data.token);
+      await fetchOrgPolicy(data.token);
       setSuccessMsg('Logged in successfully!');
     } catch (err) {
       setError(err.message);
@@ -384,6 +430,7 @@ export default function App() {
     setCurrentOrg(null);
     setFileList([]);
     setSharedFileList([]);
+    setOrgPolicy(null);
     setSuccessMsg('Logged out successfully.');
   };
 
@@ -773,9 +820,9 @@ export default function App() {
       {/* ZERO TRUST & SECURITY CONTEXT MODAL */}
       {showSecurityPanel && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9990 }}>
-          <div style={{ backgroundColor: '#1e293b', border: '1px solid #38bdf8', borderRadius: '12px', padding: '28px', maxWidth: '560px', width: '100%', color: '#fff', maxHeight: '85vh', overflowY: 'auto' }}>
+          <div style={{ backgroundColor: '#1e293b', border: '1px solid #38bdf8', borderRadius: '12px', padding: '28px', maxWidth: '580px', width: '100%', color: '#fff', maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '12px', marginBottom: '18px' }}>
-              <h3 style={{ margin: 0, color: '#38bdf8' }}>🛡️ Zero Trust Security Context (Phase 9A–9D & Cycle 10.1)</h3>
+              <h3 style={{ margin: 0, color: '#38bdf8' }}>🛡️ Zero Trust Security Context (Cycles 10.1-10.3)</h3>
               <button onClick={() => setShowSecurityPanel(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}>✕</button>
             </div>
             
@@ -801,13 +848,24 @@ export default function App() {
                 </div>
               </div>
 
+              {/* CYCLE 10.2 ORG POLICY & CYCLE 10.3 GEO-CONTEXT */}
+              <div style={{ padding: '12px', backgroundColor: '#0f172a', borderRadius: '8px', marginBottom: '14px', border: '1px solid #334155' }}>
+                <h4 style={{ margin: '0 0 8px 0', color: '#38bdf8', fontSize: '13px' }}>🌍 Organization Security & Geo-Policy (Cycle 10.2/10.3)</h4>
+                {orgPolicy ? (
+                  <div>
+                    <div>Allowed Scope: <strong>Country:</strong> <code>{orgPolicy.allowed_country}</code> | <strong>State:</strong> <code>{orgPolicy.allowed_state}</code> | <strong>City:</strong> <code>{orgPolicy.allowed_city}</code></div>
+                    <div>Geo-Fencing Mode: <strong>{orgPolicy.enforce_geo_fencing ? '🔴 Strict Enforce / Block' : '🟡 Flexible / Step-Up Re-Auth'}</strong></div>
+                    <div>Require Step-Up on Location Shift: <code>{orgPolicy.require_stepup_new_location ? 'Yes' : 'No'}</code></div>
+                  </div>
+                ) : <div>Loading organization policy...</div>}
+              </div>
+
               <div style={{ marginBottom: '10px' }}><strong>Device Context (Safe ID):</strong> <code>{window.electronAPI?.platform ? `electron-profile-${currentUser?.email.split('@')[0]}` : 'electron-default-device'}</code></div>
-              <div style={{ marginBottom: '10px' }}><strong>OS / Platform:</strong> <code>{window.electronAPI?.platform || 'windows-x64'}</code></div>
-              <div style={{ marginBottom: '10px' }}><strong>Network & Region Context:</strong> <code>127.0.0.1 (LOCAL/DEV)</code></div>
+              <div style={{ marginBottom: '10px' }}><strong>Current Location Context:</strong> <code>Mumbai, Maharashtra, IN (127.0.0.1)</code></div>
               <div style={{ marginBottom: '14px' }}><strong>Device Trust State:</strong> <span style={{ color: '#4ade80', fontWeight: 'bold' }}>✓ Trusted Device Context</span></div>
               
               <div style={{ padding: '10px', backgroundColor: '#0f172a', borderRadius: '6px', fontSize: '11px', color: '#94a3b8', border: '1px dashed #334155' }}>
-                🔒 <strong>Zero Trust Invariant Verified:</strong> Admin & Role privileges NEVER grant plaintext access to encrypted files. File decryption requires explicit file ownership or a valid DEK share.
+                🔒 <strong>Zero Trust Invariant Verified:</strong> Geolocation and policies evaluate context signals without exposing plaintext DEKs, passwords, or keys.
               </div>
             </div>
           </div>
@@ -901,10 +959,48 @@ export default function App() {
             </div>
           )}
 
-          {/* ADMIN & ROLE MANAGEMENT PANEL (Cycle 10.1) */}
-          {(userPermissions.includes('USER_MANAGE') || userPermissions.includes('ROLE_MANAGE')) && (
+          {/* ADMIN & POLICY MANAGEMENT PANEL (Cycle 10.1 & 10.2) */}
+          {(userPermissions.includes('USER_MANAGE') || userPermissions.includes('ROLE_MANAGE') || userPermissions.includes('ORG_MANAGE')) && (
             <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '10px', border: '1px solid #334155' }}>
-              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#38bdf8' }}>👥 User & Role Management (Cycle 10.1 RBAC)</h3>
+              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#38bdf8' }}>⚙️ Security Policy & User Management</h3>
+
+              {/* Cycle 10.2 Organization Policy Controls */}
+              {userPermissions.includes('ORG_MANAGE') && orgPolicy && (
+                <div style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '8px', marginBottom: '16px', border: '1px solid #334155' }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#38bdf8' }}>Organization Geo Security Policy (Cycle 10.2/10.3)</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginBottom: '8px' }}>
+                    <div>
+                      <label style={{ fontSize: '10px', color: '#cbd5e1', display: 'block' }}>Allowed Country</label>
+                      <input type="text" value={orgPolicy.allowed_country} onChange={(e) => setOrgPolicy({...orgPolicy, allowed_country: e.target.value})} style={{ width: '100%', padding: '4px 6px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', fontSize: '11px', boxSizing: 'border-box' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '10px', color: '#cbd5e1', display: 'block' }}>Allowed State</label>
+                      <input type="text" value={orgPolicy.allowed_state} onChange={(e) => setOrgPolicy({...orgPolicy, allowed_state: e.target.value})} style={{ width: '100%', padding: '4px 6px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', fontSize: '11px', boxSizing: 'border-box' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '10px', color: '#cbd5e1', display: 'block' }}>Allowed City</label>
+                      <input type="text" value={orgPolicy.allowed_city} onChange={(e) => setOrgPolicy({...orgPolicy, allowed_city: e.target.value})} style={{ width: '100%', padding: '4px 6px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', borderRadius: '4px', fontSize: '11px', boxSizing: 'border-box' }} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: '#cbd5e1', marginBottom: '8px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <input type="checkbox" checked={orgPolicy.enforce_geo_fencing} onChange={(e) => setOrgPolicy({...orgPolicy, enforce_geo_fencing: e.target.checked})} />
+                      Strict Geo-Fencing (Block Violations)
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <input type="checkbox" checked={orgPolicy.require_stepup_new_location} onChange={(e) => setOrgPolicy({...orgPolicy, require_stepup_new_location: e.target.checked})} />
+                      Step-Up on Location Shift
+                    </label>
+                  </div>
+                  <button onClick={() => handleUpdatePolicy({
+                    allowedCountry: orgPolicy.allowed_country,
+                    allowedState: orgPolicy.allowed_state,
+                    allowedCity: orgPolicy.allowed_city,
+                    enforceGeoFencing: orgPolicy.enforce_geo_fencing,
+                    requireStepupNewLocation: orgPolicy.require_stepup_new_location,
+                  })} style={{ padding: '4px 12px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>Update Policy</button>
+                </div>
+              )}
 
               {/* Add User Form */}
               <form onSubmit={handleCreateUser} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px', gap: '8px', marginBottom: '16px' }}>
@@ -951,7 +1047,7 @@ export default function App() {
                     <tr style={{ borderBottom: '1px solid #334155', color: '#94a3b8' }}>
                       <th style={{ padding: '6px' }}>Email</th>
                       <th style={{ padding: '6px' }}>Assigned Roles</th>
-                      <th style={{ padding: '6px' }}>Effective Permissions</th>
+                      <th style={{ padding: '6px' }}>Permissions</th>
                     </tr>
                   </thead>
                   <tbody>
