@@ -3,6 +3,7 @@ const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
+const rbacService = require('../services/rbacService');
 
 const router = express.Router();
 
@@ -21,6 +22,11 @@ router.post('/register', async (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
+  const deviceId = req.headers['x-client-device-id'] || req.body.deviceId || 'electron-default-device';
+  const devicePlatform = req.headers['x-client-platform'] || 'Electron-Windows';
+  const userAgent = req.headers['user-agent'] || 'SecureVault-Electron-Client';
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+  const region = (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.')) ? 'LOCAL/DEV' : 'EXTERNAL/REGION';
 
   const client = await pool.connect();
   try {
@@ -42,12 +48,28 @@ router.post('/register', async (req, res) => {
     );
     const org = orgResult.rows[0];
 
+    // Seed default RBAC roles (Admin & Member) and standard permissions for organization
+    const { adminRoleId } = await rbacService.seedOrganizationRoles(client, org.id);
+
     // Create initial admin user
     const userResult = await client.query(
       'INSERT INTO users (organization_id, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, email, role, created_at',
       [org.id, normalizedEmail, passwordHash, 'ADMIN']
     );
     const user = userResult.rows[0];
+
+    // Assign Admin role to initial user in user_roles table
+    await rbacService.assignRoleToUser(client, user.id, adminRoleId);
+
+    // Register initial trusted device in user_devices table
+    await client.query(
+      `INSERT INTO user_devices 
+        (user_id, device_id, device_platform, user_agent, last_ip, last_region, is_trusted)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
+       ON CONFLICT (user_id, device_id) DO UPDATE SET
+         last_ip = EXCLUDED.last_ip, last_region = EXCLUDED.last_region, last_seen_at = CURRENT_TIMESTAMP`,
+      [user.id, deviceId, devicePlatform, userAgent, ip, region]
+    );
 
     await client.query('COMMIT');
 
@@ -56,6 +78,7 @@ router.post('/register', async (req, res) => {
       orgId: org.id,
       email: user.email,
       role: user.role,
+      deviceId,
     });
 
     res.status(201).json({
@@ -91,6 +114,11 @@ router.post('/login', async (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
+  const deviceId = req.headers['x-client-device-id'] || req.body.deviceId || 'electron-default-device';
+  const devicePlatform = req.headers['x-client-platform'] || 'Electron-Windows';
+  const userAgent = req.headers['user-agent'] || 'SecureVault-Electron-Client';
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+  const region = (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('10.') || ip.startsWith('192.168.')) ? 'LOCAL/DEV' : 'EXTERNAL/REGION';
 
   try {
     const result = await pool.query(
@@ -114,11 +142,22 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
+    // Register/update trusted device in user_devices table on successful password authentication
+    await pool.query(
+      `INSERT INTO user_devices 
+        (user_id, device_id, device_platform, user_agent, last_ip, last_region, is_trusted)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
+       ON CONFLICT (user_id, device_id) DO UPDATE SET
+         last_ip = EXCLUDED.last_ip, last_region = EXCLUDED.last_region, last_seen_at = CURRENT_TIMESTAMP`,
+      [user.id, deviceId, devicePlatform, userAgent, ip, region]
+    );
+
     const token = generateToken({
       userId: user.id,
       orgId: user.organization_id,
       email: user.email,
       role: user.role,
+      deviceId,
     });
 
     res.json({
@@ -177,8 +216,8 @@ router.get('/me', verifyToken, async (req, res) => {
   }
 });
 
-// POST /api/auth/logout - Logout endpoint
-router.post('/logout', (_req, res) => {
+// POST /api/auth/logout - Logout endpoint (Protected)
+router.post('/logout', verifyToken, (_req, res) => {
   res.json({ message: 'Logout successful' });
 });
 
