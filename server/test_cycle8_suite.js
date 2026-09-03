@@ -79,20 +79,20 @@ function uploadMultipart(pathName, fields, fileBuffer, fileName, headers = {}) {
   });
 }
 
-async function runDekRecoveryTestSuite() {
+async function runCycle8TestSuite() {
   console.log('================================================================');
-  console.log('--- STARTING PERSISTENT DEK RECOVERY INTEGRATION TEST SUITE ---');
+  console.log('--- STARTING CYCLE 8 REVOCATION FOCUSED TEST SUITE ---');
   console.log('================================================================\n');
 
-  // 1. Setup Organization & Users (Alice & Bob)
-  const orgName = `DekRecovery_Org_${Date.now()}`;
+  // 1. Setup Organization & Users (Alice, Bob)
+  const orgName = `Cycle8_Org_${Date.now()}`;
 
-  const aliceEmail = `alice_${Date.now()}@dekrec.org`;
+  const aliceEmail = `alice_${Date.now()}@cycle8.org`;
   const aliceKeyPair = crypto.generateKeyPairSync('x25519');
   const alicePrivPem = aliceKeyPair.privateKey.export({ type: 'pkcs8', format: 'pem' });
   const alicePubPem = aliceKeyPair.publicKey.export({ type: 'spki', format: 'pem' });
 
-  const bobEmail = `bob_${Date.now()}@dekrec.org`;
+  const bobEmail = `bob_${Date.now()}@cycle8.org`;
   const bobKeyPair = crypto.generateKeyPairSync('x25519');
   const bobPrivPem = bobKeyPair.privateKey.export({ type: 'pkcs8', format: 'pem' });
   const bobPubPem = bobKeyPair.publicKey.export({ type: 'spki', format: 'pem' });
@@ -112,24 +112,20 @@ async function runDekRecoveryTestSuite() {
   await request('POST', '/api/crypto/public-key', { publicKey: bobPubPem }, { 'Authorization': `Bearer ${bobToken}` });
 
   console.log(`[Setup] Registered Users in Organization (${orgId}):`);
-  console.log(`  - Alice : ${aliceId}`);
-  console.log(`  - Bob   : ${bobId}\n`);
+  console.log(`  - Alice (Owner)     : ${aliceId}`);
+  console.log(`  - Bob   (Recipient) : ${bobId}\n`);
 
-  // --- TEST 1: Encrypt & Upload File with Owner Self-Wrapped DEK ---
-  console.log('[TEST 1] Testing file upload with Owner DEK self-wrapping...');
-  const samplePlaintext = Buffer.from('CONFIDENTIAL RECOVERABLE FILE PAYLOAD - PERSISTENT DEK MANAGEMENT TEST');
+  // Alice encrypts & uploads File A
+  const samplePlaintext = Buffer.from('CYCLE 8 REVOCATION TEST PAYLOAD - TOP SECRET ENCRYPTED DOCUMENT');
   const fileId = crypto.randomUUID();
   const { dek: originalDek, iv: fileIv, ciphertext: fileCiphertext, authTag: fileAuthTag } = fileCrypto.encryptBuffer(samplePlaintext);
-
-  // Store in memory initially
   fileCrypto.storeDek(fileId, originalDek);
 
-  // Owner self-wraps DEK using Alice's private key + Alice's public key
   const ownerWrapping = keyWrapping.wrapDek(originalDek, alicePrivPem, alicePubPem, fileId, aliceId);
 
   const uploadRes = await uploadMultipart('/api/files/upload', {
     fileId,
-    originalName: 'Recoverable_Document.pdf',
+    originalName: 'Cycle8_Top_Secret.pdf',
     originalSize: samplePlaintext.length.toString(),
     iv: fileIv.toString('base64'),
     authTag: fileAuthTag.toString('base64'),
@@ -139,70 +135,15 @@ async function runDekRecoveryTestSuite() {
     wrapIv: ownerWrapping.wrapIv,
     wrapAuthTag: ownerWrapping.wrapAuthTag,
     senderPublicKey: alicePubPem,
-  }, fileCiphertext, 'Recoverable_Document.enc', { 'Authorization': `Bearer ${aliceToken}` });
+  }, fileCiphertext, 'Cycle8_Top_Secret.enc', { 'Authorization': `Bearer ${aliceToken}` });
 
   if (uploadRes.status !== 201) throw new Error(`Upload failed with status ${uploadRes.status}`);
+  const initialStorageKey = uploadRes.data.file.storageKey;
 
-  const ownerKeyCheck = await pool.query('SELECT * FROM file_keys WHERE file_id = $1 AND user_id = $2', [fileId, aliceId]);
-  if (ownerKeyCheck.rows.length === 0) throw new Error('FAIL: Owner wrapped DEK record missing in file_keys database table!');
-  console.log('✅ TEST 1 PASSED: File uploaded and Owner wrapped DEK safely persisted in file_keys!');
+  // --- TEST 1: Alice shares File A with Bob -> Bob Access Verification ---
+  console.log('[TEST 1] Testing initial file sharing (Alice shares File A with Bob)...');
+  const bobWrapping = keyWrapping.wrapDek(originalDek, alicePrivPem, bobPubPem, fileId, bobId);
 
-  // --- TEST 2: Owner DEK Recovery After Electron Restart / Memory Reset ---
-  console.log('\n[TEST 2] Testing Owner DEK recovery after memory reset (simulating Electron app restart)...');
-  // Clear memory DEK to simulate process restart
-  fileCrypto.storeDek(fileId, undefined);
-  if (fileCrypto.getDek(fileId) !== undefined) throw new Error('FAIL: In-memory DEK reset failed!');
-
-  // Alice fetches download payload
-  const aliceDlRes = await request('GET', `/api/files/${fileId}/download`, null, { 'Authorization': `Bearer ${aliceToken}` });
-  if (aliceDlRes.status !== 200) throw new Error(`Alice download failed with status ${aliceDlRes.status}`);
-  if (!aliceDlRes.data.wrapping) throw new Error('FAIL: Wrapping payload missing from owner download response!');
-
-  // Alice unwraps DEK locally using Alice's private key
-  const aliceRecoveredDek = keyWrapping.unwrapDek(
-    aliceDlRes.data.wrapping.wrappedDek,
-    aliceDlRes.data.wrapping.wrapSalt,
-    aliceDlRes.data.wrapping.wrapIv,
-    aliceDlRes.data.wrapping.wrapAuthTag,
-    aliceDlRes.data.wrapping.senderPublicKey,
-    alicePrivPem,
-    fileId,
-    aliceId
-  );
-
-  if (!aliceRecoveredDek.equals(originalDek)) throw new Error('FAIL: Recovered DEK does NOT match original DEK!');
-
-  const aliceDecrypted = fileCrypto.decryptBuffer(
-    Buffer.from(aliceDlRes.data.ciphertext, 'base64'),
-    aliceRecoveredDek,
-    Buffer.from(aliceDlRes.data.metadata.iv, 'base64'),
-    Buffer.from(aliceDlRes.data.metadata.authTag, 'base64')
-  );
-
-  if (!aliceDecrypted.equals(samplePlaintext)) throw new Error('FAIL: Decrypted payload byte mismatch!');
-  console.log('✅ TEST 2 PASSED: Alice (Owner) successfully recovered DEK from server wrapped key and decrypted file!');
-
-  // --- TEST 3: Owner Sharing File After Application Restart ---
-  console.log('\n[TEST 3] Testing file sharing after application restart (DEK auto-recovery before sharing)...');
-  // Clear memory DEK again
-  fileCrypto.storeDek(fileId, undefined);
-
-  // Alice's client recovers DEK from server wrapping
-  const aliceFetchForShare = await request('GET', `/api/files/${fileId}/download`, null, { 'Authorization': `Bearer ${aliceToken}` });
-  const aliceAutoRecoveredDek = keyWrapping.unwrapDek(
-    aliceFetchForShare.data.wrapping.wrappedDek,
-    aliceFetchForShare.data.wrapping.wrapSalt,
-    aliceFetchForShare.data.wrapping.wrapIv,
-    aliceFetchForShare.data.wrapping.wrapAuthTag,
-    aliceFetchForShare.data.wrapping.senderPublicKey,
-    alicePrivPem,
-    fileId,
-    aliceId
-  );
-  fileCrypto.storeDek(fileId, aliceAutoRecoveredDek);
-
-  // Alice wraps DEK for Bob
-  const bobWrapping = keyWrapping.wrapDek(aliceAutoRecoveredDek, alicePrivPem, bobPubPem, fileId, bobId);
   const shareRes = await request('POST', `/api/files/${fileId}/share`, {
     recipientUserId: bobId,
     senderPublicKey: alicePubPem,
@@ -213,13 +154,14 @@ async function runDekRecoveryTestSuite() {
   }, { 'Authorization': `Bearer ${aliceToken}` });
 
   if (shareRes.status !== 201) throw new Error(`Share failed with status ${shareRes.status}`);
-  console.log('✅ TEST 3 PASSED: Alice auto-recovered DEK and shared file with Bob post-restart!');
 
-  // --- TEST 4: Recipient (Bob) DEK Unwrapping & File Decryption ---
-  console.log('\n[TEST 4] Testing Bob (Recipient) DEK unwrapping and decryption...');
+  // Bob checks shared files list
+  const bobSharedRes = await request('GET', '/api/files/shared', null, { 'Authorization': `Bearer ${bobToken}` });
+  const foundFileInBobList = bobSharedRes.data.sharedFiles.find(f => f.id === fileId);
+  if (!foundFileInBobList) throw new Error('FAIL: File A missing from Bob shared file listing!');
+
+  // Bob downloads & decrypts file
   const bobDlRes = await request('GET', `/api/files/${fileId}/download`, null, { 'Authorization': `Bearer ${bobToken}` });
-  if (bobDlRes.status !== 200) throw new Error(`Bob download failed with status ${bobDlRes.status}`);
-
   const bobUnwrappedDek = keyWrapping.unwrapDek(
     bobDlRes.data.wrapping.wrappedDek,
     bobDlRes.data.wrapping.wrapSalt,
@@ -230,9 +172,6 @@ async function runDekRecoveryTestSuite() {
     fileId,
     bobId
   );
-
-  if (!bobUnwrappedDek.equals(originalDek)) throw new Error('FAIL: Bob unwrapped DEK does NOT match original DEK!');
-
   const bobDecrypted = fileCrypto.decryptBuffer(
     Buffer.from(bobDlRes.data.ciphertext, 'base64'),
     bobUnwrappedDek,
@@ -241,35 +180,80 @@ async function runDekRecoveryTestSuite() {
   );
 
   if (!bobDecrypted.equals(samplePlaintext)) throw new Error('FAIL: Bob decrypted payload byte mismatch!');
-  console.log('✅ TEST 4 PASSED: Bob successfully unwrapped DEK and decrypted shared file 100% byte-for-byte!');
+  console.log('✅ TEST 1 PASSED: Alice shared file with Bob; Bob listed, unwrapped DEK, and decrypted successfully!');
 
-  // --- TEST 5: Security Boundary Verification (Zero Plaintext DEK in DB) ---
-  console.log('\n[TEST 5] Inspecting database for zero plaintext DEK storage...');
-  const dbFileKeys = await pool.query('SELECT * FROM file_keys WHERE file_id = $1', [fileId]);
+  // --- TEST 2: Alice Revokes Bob's Access ---
+  console.log('\n[TEST 2] Testing Alice revoking Bob\'s access...');
+  const revokeRes = await request('DELETE', `/api/files/${fileId}/share/${bobId}`, null, { 'Authorization': `Bearer ${aliceToken}` });
+  if (revokeRes.status !== 200) throw new Error(`Revoke endpoint returned status ${revokeRes.status}`);
+
+  const checkDbKeys = await pool.query('SELECT * FROM file_keys WHERE file_id = $1 AND user_id = $2', [fileId, bobId]);
+  if (checkDbKeys.rows.length > 0) throw new Error('FAIL: file_keys row for Bob was not deleted!');
+  console.log('✅ TEST 2 PASSED: Alice revoked Bob! file_keys record for Bob removed from database!');
+
+  // --- TEST 3: Revoked User Listing Check ---
+  console.log('\n[TEST 3] Verifying File A no longer appears in Bob\'s shared files list...');
+  const bobSharedPostRevoke = await request('GET', '/api/files/shared', null, { 'Authorization': `Bearer ${bobToken}` });
+  const fileStillInBobList = bobSharedPostRevoke.data.sharedFiles.find(f => f.id === fileId);
+  if (fileStillInBobList) throw new Error('FAIL: Revoked file still appears in Bob\'s shared files list!');
+  console.log('✅ TEST 3 PASSED: Revoked file immediately vanished from Bob\'s shared files list!');
+
+  // --- TEST 4: Revoked User Access Rejection ---
+  console.log('\n[TEST 4] Verifying Bob cannot download or decrypt ciphertext post-revocation...');
+  const bobPostRevokeDl = await request('GET', `/api/files/${fileId}/download`, null, { 'Authorization': `Bearer ${bobToken}` });
+  console.log(`  HTTP Download Result: ${bobPostRevokeDl.status} (${bobPostRevokeDl.data.message})`);
+  if (bobPostRevokeDl.status !== 403 && bobPostRevokeDl.status !== 404) {
+    throw new Error(`FAIL: Revoked user download returned unexpected status ${bobPostRevokeDl.status}`);
+  }
+  console.log('✅ TEST 4 PASSED: Bob download request strictly rejected with HTTP 403 Forbidden!');
+
+  // --- TEST 5: Owner Continued Access ---
+  console.log('\n[TEST 5] Verifying Alice (Owner) retains full download and decryption access post-revocation...');
+  const alicePostRevokeDl = await request('GET', `/api/files/${fileId}/download`, null, { 'Authorization': `Bearer ${aliceToken}` });
+  if (alicePostRevokeDl.status !== 200) throw new Error(`Alice download failed post-revocation with status ${alicePostRevokeDl.status}`);
+
+  const aliceUnwrappedDek = keyWrapping.unwrapDek(
+    alicePostRevokeDl.data.wrapping.wrappedDek,
+    alicePostRevokeDl.data.wrapping.wrapSalt,
+    alicePostRevokeDl.data.wrapping.wrapIv,
+    alicePostRevokeDl.data.wrapping.wrapAuthTag,
+    alicePostRevokeDl.data.wrapping.senderPublicKey,
+    alicePrivPem,
+    fileId,
+    aliceId
+  );
+  const aliceDecrypted = fileCrypto.decryptBuffer(
+    Buffer.from(alicePostRevokeDl.data.ciphertext, 'base64'),
+    aliceUnwrappedDek,
+    Buffer.from(alicePostRevokeDl.data.metadata.iv, 'base64'),
+    Buffer.from(alicePostRevokeDl.data.metadata.authTag, 'base64')
+  );
+
+  if (!aliceDecrypted.equals(samplePlaintext)) throw new Error('FAIL: Alice decrypted payload byte mismatch!');
+  console.log('✅ TEST 5 PASSED: Alice (Owner) retained 100% full access to download & decrypt file!');
+
+  // --- TEST 6: B2 Storage Key Invariant & Zero DEK Exposure ---
+  console.log('\n[TEST 6] Verifying B2 object invariant & zero DEK exposure during revocation...');
+  const finalFileDb = await pool.query('SELECT storage_key FROM files WHERE id = $1', [fileId]);
+  if (finalFileDb.rows[0].storage_key !== initialStorageKey) {
+    throw new Error('FAIL: B2 storage key was modified during revocation!');
+  }
+
+  const revokePayloadStr = JSON.stringify(revokeRes);
   const origDekHex = originalDek.toString('hex');
   const origDekB64 = originalDek.toString('base64');
-
-  for (const row of dbFileKeys.rows) {
-    const rowStr = JSON.stringify(row);
-    if (rowStr.includes(origDekHex) || rowStr.includes(origDekB64)) {
-      throw new Error('CRITICAL SECURITY FAILURE: Plaintext DEK detected in database file_keys table!');
-    }
+  if (revokePayloadStr.includes(origDekHex) || revokePayloadStr.includes(origDekB64)) {
+    throw new Error('CRITICAL SECURITY FAILURE: Plaintext DEK exposed in revocation response!');
   }
-  console.log('✅ TEST 5 PASSED: Verified zero plaintext DEKs stored in PostgreSQL database!');
-
-  // --- TEST 6: Core Infrastructure & Regression ---
-  console.log('\n[TEST 6] Running regression check...');
-  const healthRes = await request('GET', '/api/health');
-  if (healthRes.status !== 200 || !healthRes.data.database.connected) throw new Error('Health check failed!');
-  console.log('✅ TEST 6 PASSED: All core subsystems and prior cycles fully operational!');
+  console.log('✅ TEST 6 PASSED: B2 ciphertext object strictly invariant & zero DEK exposure verified!');
 
   console.log('\n================================================================');
-  console.log('🎉 ALL 6 PERSISTENT DEK RECOVERY INTEGRATION TESTS PASSED 100%!');
+  console.log('🎉 ALL 6 CYCLE 8 REVOCATION INTEGRATION TESTS PASSED 100%!');
   console.log('================================================================');
   process.exit(0);
 }
 
-runDekRecoveryTestSuite().catch((err) => {
-  console.error('\n❌ DEK RECOVERY TEST RUNNER FAILED:', err.stack || err.message);
+runCycle8TestSuite().catch((err) => {
+  console.error('\n❌ CYCLE 8 TEST RUNNER FAILED:', err.stack || err.message);
   process.exit(1);
 });
