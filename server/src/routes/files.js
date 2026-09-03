@@ -3,19 +3,20 @@ const multer = require('multer');
 const crypto = require('crypto');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
+const { requirePermission, requireFileAccess } = require('../middleware/authorize');
 const { uploadToB2, getFromB2 } = require('../storage/s3Client');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// POST /api/files/upload - Upload ciphertext to Backblaze B2 and store metadata in PostgreSQL (with Owner DEK wrapping)
-router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
+// POST /api/files/upload - Upload ciphertext to Backblaze B2 and store metadata in PostgreSQL (Requires FILE_UPLOAD permission)
+router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.single('file'), async (req, res) => {
   try {
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ message: 'Ciphertext file payload is required.' });
     }
 
-    const { fileId: clientFileId, originalName, originalSize, iv, authTag, algorithm, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey } = req.body;
+    const { fileId: clientFileId, originalName, originalSize, iv, authTag, algorithm, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey, sensitivityLevel } = req.body;
 
     if (!originalName || !iv || !authTag) {
       return res.status(400).json({ message: 'Missing required encryption metadata (originalName, iv, authTag).' });
@@ -27,15 +28,19 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
       : crypto.randomUUID();
     const storageKey = `files/${fileId}/encrypted`;
 
+    const normalizedSensitivity = ['NORMAL', 'SENSITIVE', 'HIGHLY_SENSITIVE'].includes(sensitivityLevel)
+      ? sensitivityLevel
+      : 'NORMAL';
+
     // 1. Upload ciphertext Buffer to B2 bucket
     await uploadToB2(storageKey, req.file.buffer, 'application/octet-stream');
 
     // 2. Insert metadata record into PostgreSQL files table
     const result = await pool.query(
       `INSERT INTO files 
-        (id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
-       RETURNING id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, created_at`,
+        (id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, sensitivity_level) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+       RETURNING id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, sensitivity_level, created_at`,
       [
         fileId,
         ownerId,
@@ -45,6 +50,7 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
         algorithm || 'AES-256-GCM',
         iv,
         authTag,
+        normalizedSensitivity,
       ]
     );
 
@@ -74,6 +80,7 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
         originalName: savedFile.original_name,
         originalSize: savedFile.original_size,
         storageKey: savedFile.storage_key,
+        sensitivityLevel: savedFile.sensitivity_level,
         createdAt: savedFile.created_at,
       },
     });
@@ -83,13 +90,13 @@ router.post('/upload', verifyToken, upload.single('file'), async (req, res) => {
   }
 });
 
-// GET /api/files - Get current authenticated user's owned file listing
-router.get('/', verifyToken, async (req, res) => {
+// GET /api/files - Get current authenticated user's owned file listing (Requires FILE_READ permission)
+router.get('/', verifyToken, requirePermission('FILE_READ'), async (req, res) => {
   try {
     const ownerId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, created_at 
+      `SELECT id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, sensitivity_level, created_at 
        FROM files 
        WHERE owner_id = $1 
        ORDER BY created_at DESC`,
@@ -104,6 +111,7 @@ router.get('/', verifyToken, async (req, res) => {
       algorithm: row.encryption_algorithm,
       iv: row.iv,
       authTag: row.auth_tag,
+      sensitivityLevel: row.sensitivity_level,
       createdAt: row.created_at,
     }));
 
@@ -114,13 +122,13 @@ router.get('/', verifyToken, async (req, res) => {
   }
 });
 
-// GET /api/files/shared - Get files shared with the current authenticated user
-router.get('/shared', verifyToken, async (req, res) => {
+// GET /api/files/shared - Get files shared with the current authenticated user (Requires FILE_READ permission)
+router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, res) => {
   try {
     const currentUserId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT f.id, f.original_name, f.original_size, f.storage_key, f.encryption_algorithm, f.iv, f.auth_tag, f.created_at,
+      `SELECT f.id, f.original_name, f.original_size, f.storage_key, f.encryption_algorithm, f.iv, f.auth_tag, f.sensitivity_level, f.created_at,
               fk.sender_public_key, fk.wrapped_dek, fk.wrap_salt, fk.wrap_iv, fk.wrap_auth_tag,
               u.email AS owner_email
        FROM files f
@@ -139,6 +147,7 @@ router.get('/shared', verifyToken, async (req, res) => {
       algorithm: row.encryption_algorithm,
       iv: row.iv,
       authTag: row.auth_tag,
+      sensitivityLevel: row.sensitivity_level,
       createdAt: row.created_at,
       ownerEmail: row.owner_email,
       wrapping: {
@@ -157,20 +166,11 @@ router.get('/shared', verifyToken, async (req, res) => {
   }
 });
 
-// GET /api/files/:id/shares - Get list of users a file is shared with (Owner ONLY)
-router.get('/:id/shares', verifyToken, async (req, res) => {
+// GET /api/files/:id/shares - Get list of users a file is shared with (Requires FILE_REVOKE & Owner Access)
+router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, res) => {
   try {
     const fileId = req.params.id;
     const currentUserId = req.user.userId;
-
-    const fileResult = await pool.query('SELECT id, owner_id FROM files WHERE id = $1', [fileId]);
-    if (fileResult.rows.length === 0) {
-      return res.status(404).json({ message: 'File not found.' });
-    }
-
-    if (fileResult.rows[0].owner_id !== currentUserId) {
-      return res.status(403).json({ message: 'Access denied. Only the file owner can view file shares.' });
-    }
 
     const result = await pool.query(
       `SELECT fk.user_id, u.email, fk.created_at
@@ -194,35 +194,17 @@ router.get('/:id/shares', verifyToken, async (req, res) => {
   }
 });
 
-// POST /api/files/:id/share - Share file with a recipient user (Owner ONLY)
-router.post('/:id/share', verifyToken, async (req, res) => {
+// POST /api/files/:id/share - Share file with a recipient user (Requires FILE_SHARE & Owner Access)
+router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, res) => {
   try {
     const fileId = req.params.id;
-    const currentUserId = req.user.userId;
     const { recipientUserId, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey } = req.body;
 
     if (!recipientUserId || !wrappedDek || !wrapSalt || !wrapIv || !wrapAuthTag || !senderPublicKey) {
       return res.status(400).json({ message: 'Missing required sharing fields.' });
     }
 
-    // 1. Verify file exists
-    const fileResult = await pool.query(
-      'SELECT f.id, f.owner_id, u.organization_id AS owner_org_id FROM files f JOIN users u ON f.owner_id = u.id WHERE f.id = $1',
-      [fileId]
-    );
-
-    if (fileResult.rows.length === 0) {
-      return res.status(404).json({ message: 'File not found.' });
-    }
-
-    const fileRecord = fileResult.rows[0];
-
-    // 2. AUTHORIZATION CHECK: ONLY the file owner can share
-    if (fileRecord.owner_id !== currentUserId) {
-      return res.status(403).json({ message: 'Access denied. Only the file owner can share this file.' });
-    }
-
-    // 3. Verify recipient exists and check organization boundary
+    // 1. Verify recipient exists and check organization boundary
     const recipientResult = await pool.query(
       'SELECT id, organization_id, public_key FROM users WHERE id = $1',
       [recipientUserId]
@@ -235,7 +217,7 @@ router.post('/:id/share', verifyToken, async (req, res) => {
     const recipient = recipientResult.rows[0];
 
     // ORGANIZATION BOUNDARY CHECK: Owner and recipient MUST belong to the same organization
-    if (recipient.organization_id !== fileRecord.owner_org_id) {
+    if (recipient.organization_id !== req.user.orgId) {
       return res.status(403).json({ message: 'Access denied. Cross-organization file sharing is strictly prohibited.' });
     }
 
@@ -243,7 +225,7 @@ router.post('/:id/share', verifyToken, async (req, res) => {
       return res.status(400).json({ message: 'Recipient does not have a registered cryptographic public key.' });
     }
 
-    // 4. Upsert wrapped DEK into file_keys table
+    // 2. Upsert wrapped DEK into file_keys table
     await pool.query(
       `INSERT INTO file_keys 
         (file_id, user_id, sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag)
@@ -269,27 +251,13 @@ router.post('/:id/share', verifyToken, async (req, res) => {
   }
 });
 
-// DELETE /api/files/:id/share/:recipientUserId - Revoke a user's share permission (Owner ONLY)
-router.delete('/:id/share/:recipientUserId', verifyToken, async (req, res) => {
+// DELETE /api/files/:id/share/:recipientUserId - Revoke a user's share permission (Requires FILE_REVOKE & Owner Access)
+router.delete('/:id/share/:recipientUserId', verifyToken, requireFileAccess('REVOKE'), async (req, res) => {
   try {
     const fileId = req.params.id;
     const recipientUserId = req.params.recipientUserId;
-    const currentUserId = req.user.userId;
 
-    // 1. Verify file exists
-    const fileResult = await pool.query('SELECT id, owner_id FROM files WHERE id = $1', [fileId]);
-    if (fileResult.rows.length === 0) {
-      return res.status(404).json({ message: 'File not found.' });
-    }
-
-    const fileRecord = fileResult.rows[0];
-
-    // 2. AUTHORIZATION CHECK: ONLY the file owner can revoke shares
-    if (fileRecord.owner_id !== currentUserId) {
-      return res.status(403).json({ message: 'Access denied. Only the file owner can revoke share permissions.' });
-    }
-
-    // 3. Delete file_keys record for recipient
+    // Delete file_keys record for recipient
     const deleteResult = await pool.query(
       'DELETE FROM file_keys WHERE file_id = $1 AND user_id = $2 RETURNING id',
       [fileId, recipientUserId]
@@ -310,45 +278,34 @@ router.delete('/:id/share/:recipientUserId', verifyToken, async (req, res) => {
   }
 });
 
-// GET /api/files/:id/download - Download encrypted ciphertext from B2 and metadata from PostgreSQL
-router.get('/:id/download', verifyToken, async (req, res) => {
+// GET /api/files/:id/download - Download encrypted ciphertext from B2 and metadata from PostgreSQL (Requires FILE_READ & Resource Access)
+router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, res) => {
   try {
     const currentUserId = req.user.userId;
     const fileId = req.params.id;
 
-    // 1. Fetch file record from PostgreSQL
+    // Fetch full file metadata from PostgreSQL
     const fileResult = await pool.query(
-      'SELECT id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, created_at FROM files WHERE id = $1',
+      'SELECT id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, sensitivity_level, created_at FROM files WHERE id = $1',
       [fileId]
     );
 
-    if (fileResult.rows.length === 0) {
-      return res.status(404).json({ message: 'File not found.' });
-    }
-
     const fileRecord = fileResult.rows[0];
 
-    // 2. AUTHORIZATION CHECK: Must be file owner OR have a valid file_keys record
-    const isOwner = fileRecord.owner_id === currentUserId;
-    
     // Fetch file_keys record for requesting user (owner or recipient)
     const keyResult = await pool.query(
       'SELECT sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag FROM file_keys WHERE file_id = $1 AND user_id = $2',
       [fileId, currentUserId]
     );
 
-    if (!isOwner && keyResult.rows.length === 0) {
-      return res.status(403).json({ message: 'Access denied. You do not have permission to access this file.' });
-    }
-
-    // 3. Download ciphertext Buffer from Backblaze B2
+    // Download ciphertext Buffer from Backblaze B2
     const ciphertextBuffer = await getFromB2(fileRecord.storage_key);
 
     if (!ciphertextBuffer) {
       return res.status(404).json({ message: 'Ciphertext object not found in B2 storage.' });
     }
 
-    // 4. Return base64 ciphertext and encryption metadata
+    // Return base64 ciphertext and encryption metadata
     const responsePayload = {
       ciphertext: ciphertextBuffer.toString('base64'),
       metadata: {
@@ -359,11 +316,11 @@ router.get('/:id/download', verifyToken, async (req, res) => {
         algorithm: fileRecord.encryption_algorithm,
         iv: fileRecord.iv,
         authTag: fileRecord.auth_tag,
+        sensitivityLevel: fileRecord.sensitivity_level,
         createdAt: fileRecord.created_at,
       },
     };
 
-    // If a file_keys record exists for the requesting user (owner or recipient), return wrapping payload for local DEK recovery
     if (keyResult.rows.length > 0) {
       const shareRecord = keyResult.rows[0];
       responsePayload.wrapping = {
