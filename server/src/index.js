@@ -7,6 +7,7 @@ const authRouter = require('./routes/auth');
 const cryptoRouter = require('./routes/crypto');
 const filesRouter = require('./routes/files');
 const usersRouter = require('./routes/users');
+const rolesRouter = require('./routes/roles');
 
 dotenv.config();
 
@@ -22,6 +23,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/crypto', cryptoRouter);
 app.use('/api/files', filesRouter);
 app.use('/api/users', usersRouter);
+app.use('/api/roles', rolesRouter);
 
 app.get('/', (_req, res) => {
   res.json({ message: 'SecureVault Backend API' });

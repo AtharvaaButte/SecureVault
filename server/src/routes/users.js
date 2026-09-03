@@ -2,18 +2,13 @@ const express = require('express');
 const argon2 = require('argon2');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/authorize');
+const rbacService = require('../services/rbacService');
 
 const router = express.Router();
 
-function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'ADMIN') {
-    return res.status(403).json({ message: 'Administrator access required.' });
-  }
-  next();
-}
-
-// GET /api/users/members - Admin: list all users in the current organization
-router.get('/members', verifyToken, requireAdmin, async (req, res) => {
+// GET /api/users/members - List all users in current organization with assigned roles & effective permissions (Requires USER_MANAGE)
+router.get('/members', verifyToken, requirePermission('USER_MANAGE'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, email, role, public_key, created_at
@@ -23,13 +18,21 @@ router.get('/members', verifyToken, requireAdmin, async (req, res) => {
       [req.user.orgId]
     );
 
-    const users = result.rows.map((user) => ({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      hasPublicKey: Boolean(user.public_key),
-      createdAt: user.created_at,
-    }));
+    const users = [];
+    for (const user of result.rows) {
+      const assignedRoles = await rbacService.getUserRoles(user.id);
+      const permissions = await rbacService.getUserPermissions(user.id);
+
+      users.push({
+        id: user.id,
+        email: user.email,
+        legacyRole: user.role,
+        roles: assignedRoles,
+        permissions,
+        hasPublicKey: Boolean(user.public_key),
+        createdAt: user.created_at,
+      });
+    }
 
     res.json({ users });
   } catch (error) {
@@ -38,9 +41,9 @@ router.get('/members', verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
-// POST /api/users - Admin: create an additional user in the current organization
-router.post('/', verifyToken, requireAdmin, async (req, res) => {
-  const { email, password, role } = req.body || {};
+// POST /api/users - Create an additional user in the current organization (Requires USER_CREATE)
+router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res) => {
+  const { email, password, role, roleIds } = req.body || {};
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required.' });
@@ -65,18 +68,70 @@ router.post('/', verifyToken, requireAdmin, async (req, res) => {
     );
 
     const user = result.rows[0];
+
+    // Seed default roles if needed
+    const { adminRoleId, memberRoleId } = await rbacService.seedOrganizationRoles(pool, req.user.orgId);
+
+    if (Array.isArray(roleIds) && roleIds.length > 0) {
+      await rbacService.assignUserRoles(req.user.orgId, user.id, roleIds);
+    } else {
+      const defaultRoleId = assignedRole === 'ADMIN' ? adminRoleId : memberRoleId;
+      await rbacService.assignRoleToUser(pool, user.id, defaultRoleId);
+    }
+
+    const assignedRoles = await rbacService.getUserRoles(user.id);
+    const permissions = await rbacService.getUserPermissions(user.id);
+
     res.status(201).json({
       message: 'User created successfully',
       user: {
         id: user.id,
         email: user.email,
-        role: user.role,
+        legacyRole: user.role,
+        roles: assignedRoles,
+        permissions,
         createdAt: user.created_at,
       },
     });
   } catch (error) {
     console.error('[Create User Error]:', error.message);
     res.status(500).json({ message: 'Failed to create organization user.' });
+  }
+});
+
+// PUT /api/users/:id/roles - Assign or update multiple roles for a user in the organization (Requires ROLE_MANAGE or USER_MANAGE)
+router.put('/:id/roles', verifyToken, requirePermission('USER_MANAGE'), async (req, res) => {
+  try {
+    const targetUserId = req.params.id;
+    const { roleIds } = req.body || {};
+
+    if (!Array.isArray(roleIds) || roleIds.length === 0) {
+      return res.status(400).json({ message: 'At least one role ID is required.' });
+    }
+
+    // Check target user belongs to caller's organization (Organization Boundary Check)
+    const userCheck = await pool.query(
+      'SELECT id FROM users WHERE id = $1 AND organization_id = $2',
+      [targetUserId, req.user.orgId]
+    );
+    if (userCheck.rows.length === 0) {
+      return res.status(403).json({ message: 'Access denied. User does not belong to this organization.' });
+    }
+
+    await rbacService.assignUserRoles(req.user.orgId, targetUserId, roleIds);
+
+    const updatedRoles = await rbacService.getUserRoles(targetUserId);
+    const updatedPermissions = await rbacService.getUserPermissions(targetUserId);
+
+    res.json({
+      message: 'User roles updated successfully.',
+      userId: targetUserId,
+      roles: updatedRoles,
+      permissions: updatedPermissions,
+    });
+  } catch (error) {
+    console.error('[Update User Roles Error]:', error.message);
+    res.status(400).json({ message: error.message || 'Failed to update user roles.' });
   }
 });
 

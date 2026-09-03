@@ -1,0 +1,340 @@
+const { pool } = require('../db');
+
+/**
+ * Seed default Admin & Member roles for an organization and assign standard permissions.
+ */
+async function seedOrganizationRoles(clientOrPool, orgId) {
+  const executor = clientOrPool || pool;
+
+  // 1. Get all permission IDs
+  const permRes = await executor.query('SELECT id, name FROM permissions');
+  const permMap = {};
+  permRes.rows.forEach(p => {
+    permMap[p.name] = p.id;
+  });
+
+  // 2. Create Admin Role for org
+  const adminRoleRes = await executor.query(
+    `INSERT INTO roles (organization_id, name, description)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (organization_id, name) DO UPDATE SET description = EXCLUDED.description
+     RETURNING id`,
+    [orgId, 'Admin', 'Organization Administrator with full administrative and file management permissions']
+  );
+  const adminRoleId = adminRoleRes.rows[0].id;
+
+  // 3. Create Member Role for org
+  const memberRoleRes = await executor.query(
+    `INSERT INTO roles (organization_id, name, description)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (organization_id, name) DO UPDATE SET description = EXCLUDED.description
+     RETURNING id`,
+    [orgId, 'Member', 'Standard Organization Member with file management permissions']
+  );
+  const memberRoleId = memberRoleRes.rows[0].id;
+
+  // 4. Map Admin Permissions: All File & Admin permissions
+  const adminPermNames = [
+    'USER_CREATE', 'USER_MANAGE', 'ROLE_MANAGE', 'ORG_MANAGE',
+    'FILE_READ', 'FILE_UPLOAD', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'
+  ];
+  for (const name of adminPermNames) {
+    if (permMap[name]) {
+      await executor.query(
+        `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [adminRoleId, permMap[name]]
+      );
+    }
+  }
+
+  // 5. Map Member Permissions: File permissions
+  const memberPermNames = ['FILE_READ', 'FILE_UPLOAD', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'];
+  for (const name of memberPermNames) {
+    if (permMap[name]) {
+      await executor.query(
+        `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [memberRoleId, permMap[name]]
+      );
+    }
+  }
+
+  return { adminRoleId, memberRoleId };
+}
+
+/**
+ * Assign a single role to a user.
+ */
+async function assignRoleToUser(clientOrPool, userId, roleId) {
+  const executor = clientOrPool || pool;
+  await executor.query(
+    `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [userId, roleId]
+  );
+}
+
+/**
+ * Assign multiple roles to a user within an organization.
+ */
+async function assignUserRoles(orgId, userId, roleIds) {
+  if (!Array.isArray(roleIds) || roleIds.length === 0) {
+    throw new Error('At least one valid role ID must be assigned to the user.');
+  }
+
+  // Verify all target role IDs belong to the user's organization
+  const validRoles = await pool.query(
+    'SELECT id FROM roles WHERE organization_id = $1 AND id = ANY($2::uuid[])',
+    [orgId, roleIds]
+  );
+
+  if (validRoles.rows.length !== roleIds.length) {
+    throw new Error('One or more selected roles do not belong to this organization.');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Clear previous assigned roles for user
+    await client.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
+
+    for (const roleId of roleIds) {
+      await client.query(
+        'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [userId, roleId]
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Retrieve a list of distinct permission names assigned to a user via their roles.
+ */
+async function getUserPermissions(userId) {
+  const result = await pool.query(
+    `SELECT DISTINCT p.name
+     FROM permissions p
+     JOIN role_permissions rp ON p.id = rp.permission_id
+     JOIN user_roles ur ON rp.role_id = ur.role_id
+     WHERE ur.user_id = $1`,
+    [userId]
+  );
+  return result.rows.map(row => row.name);
+}
+
+/**
+ * Get assigned roles for a user.
+ */
+async function getUserRoles(userId) {
+  const result = await pool.query(
+    `SELECT r.id, r.name, r.description
+     FROM roles r
+     JOIN user_roles ur ON r.id = ur.role_id
+     WHERE ur.user_id = $1`,
+    [userId]
+  );
+  return result.rows;
+}
+
+/**
+ * Check if a user has a specific permission.
+ */
+async function hasPermission(userId, permissionName) {
+  const permissions = await getUserPermissions(userId);
+  return permissions.includes(permissionName);
+}
+
+/**
+ * Get role details for an organization by name.
+ */
+async function getRoleByName(orgId, roleName) {
+  const result = await pool.query(
+    `SELECT id, name FROM roles WHERE organization_id = $1 AND name = $2`,
+    [orgId, roleName]
+  );
+  return result.rows[0] || null;
+}
+
+/**
+ * Get all system permissions.
+ */
+async function getAllPermissions() {
+  const result = await pool.query(
+    'SELECT id, name, description FROM permissions ORDER BY name ASC'
+  );
+  return result.rows;
+}
+
+/**
+ * List all organization roles with their permissions.
+ */
+async function getOrganizationRoles(orgId) {
+  const rolesRes = await pool.query(
+    `SELECT id, name, description, created_at FROM roles WHERE organization_id = $1 ORDER BY created_at ASC`,
+    [orgId]
+  );
+
+  const roles = [];
+  for (const role of rolesRes.rows) {
+    const permsRes = await pool.query(
+      `SELECT p.id, p.name, p.description
+       FROM permissions p
+       JOIN role_permissions rp ON p.id = rp.permission_id
+       WHERE rp.role_id = $1
+       ORDER BY p.name ASC`,
+      [role.id]
+    );
+
+    roles.push({
+      id: role.id,
+      name: role.name,
+      description: role.description,
+      isSystemRole: ['Admin', 'Member'].includes(role.name),
+      permissions: permsRes.rows,
+      createdAt: role.created_at,
+    });
+  }
+
+  return roles;
+}
+
+/**
+ * Create a new custom role within an organization.
+ */
+async function createCustomRole(orgId, name, description, permissionNames = []) {
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    throw new Error('Role name is required.');
+  }
+
+  const normalizedName = name.trim();
+
+  // Check if role name already exists in org
+  const existing = await pool.query(
+    'SELECT id FROM roles WHERE organization_id = $1 AND LOWER(name) = LOWER($2)',
+    [orgId, normalizedName]
+  );
+  if (existing.rows.length > 0) {
+    throw new Error(`A role named "${normalizedName}" already exists in this organization.`);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const roleRes = await client.query(
+      `INSERT INTO roles (organization_id, name, description)
+       VALUES ($1, $2, $3)
+       RETURNING id, name, description, created_at`,
+      [orgId, normalizedName, description || '']
+    );
+    const roleId = roleRes.rows[0].id;
+
+    if (Array.isArray(permissionNames) && permissionNames.length > 0) {
+      const permsRes = await client.query(
+        'SELECT id, name FROM permissions WHERE name = ANY($1::text[])',
+        [permissionNames]
+      );
+
+      for (const p of permsRes.rows) {
+        await client.query(
+          'INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [roleId, p.id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    return {
+      id: roleId,
+      name: roleRes.rows[0].name,
+      description: roleRes.rows[0].description,
+      createdAt: roleRes.rows[0].created_at,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Update permissions for a custom role.
+ */
+async function updateRolePermissions(orgId, roleId, permissionNames = []) {
+  const roleCheck = await pool.query(
+    'SELECT id, name FROM roles WHERE id = $1 AND organization_id = $2',
+    [roleId, orgId]
+  );
+  if (roleCheck.rows.length === 0) {
+    throw new Error('Role not found or does not belong to this organization.');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    await client.query('DELETE FROM role_permissions WHERE role_id = $1', [roleId]);
+
+    if (Array.isArray(permissionNames) && permissionNames.length > 0) {
+      const permsRes = await client.query(
+        'SELECT id, name FROM permissions WHERE name = ANY($1::text[])',
+        [permissionNames]
+      );
+
+      for (const p of permsRes.rows) {
+        await client.query(
+          'INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [roleId, p.id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Delete a custom role from an organization.
+ */
+async function deleteCustomRole(orgId, roleId) {
+  const roleCheck = await pool.query(
+    'SELECT id, name FROM roles WHERE id = $1 AND organization_id = $2',
+    [roleId, orgId]
+  );
+  if (roleCheck.rows.length === 0) {
+    throw new Error('Role not found or does not belong to this organization.');
+  }
+
+  const roleName = roleCheck.rows[0].name;
+  if (['Admin', 'Member'].includes(roleName)) {
+    throw new Error('Default system roles (Admin, Member) cannot be deleted.');
+  }
+
+  await pool.query('DELETE FROM roles WHERE id = $1 AND organization_id = $2', [roleId, orgId]);
+}
+
+module.exports = {
+  seedOrganizationRoles,
+  assignRoleToUser,
+  assignUserRoles,
+  getUserPermissions,
+  getUserRoles,
+  hasPermission,
+  getRoleByName,
+  getAllPermissions,
+  getOrganizationRoles,
+  createCustomRole,
+  updateRolePermissions,
+  deleteCustomRole,
+};
