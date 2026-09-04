@@ -1,5 +1,7 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const fileCrypto = require('../crypto/fileCrypto');
 
 /**
  * Ensures the temporary directory exists inside userData path.
@@ -61,6 +63,76 @@ function saveDecryptedFile(tempDir, fileId, originalName, decryptedBuffer) {
   return decFilePath;
 }
 
+/**
+ * Reads plaintext local file, encrypts with AES-256-GCM using fileCrypto, stores DEK in memory,
+ * and saves ciphertext + metadata to temporary storage.
+ */
+function storeAndEncryptFile(filePath, tempDir) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`File does not exist: ${filePath}`);
+  }
+
+  const plainBuffer = fs.readFileSync(filePath);
+  const fileId = crypto.randomUUID();
+  const originalName = path.basename(filePath);
+  const originalSize = plainBuffer.length;
+
+  const encResult = fileCrypto.encryptBuffer(plainBuffer);
+  fileCrypto.storeDek(fileId, encResult.dek);
+
+  const ivBase64 = encResult.iv.toString('base64');
+  const authTagBase64 = encResult.authTag.toString('base64');
+
+  saveEncryptedFile(tempDir, fileId, encResult.ciphertext);
+
+  const metadata = {
+    id: fileId,
+    originalName,
+    originalSize,
+    encryptedSize: encResult.ciphertext.length,
+    algorithm: 'AES-256-GCM',
+    iv: ivBase64,
+    authTag: authTagBase64,
+    createdAt: new Date().toISOString(),
+  };
+
+  saveMetadata(tempDir, metadata);
+
+  return {
+    fileId,
+    originalName,
+    originalSize,
+    encryptedSize: encResult.ciphertext.length,
+    algorithm: 'AES-256-GCM',
+    iv: ivBase64,
+    authTag: authTagBase64,
+  };
+}
+
+/**
+ * Reads encrypted file and metadata from temporary storage, retrieves DEK from memory,
+ * and decrypts using fileCrypto.
+ */
+function decryptTempFile(tempDir, fileId) {
+  const metadata = readMetadata(tempDir, fileId);
+  const ciphertextBuffer = readEncryptedFile(tempDir, fileId);
+  const dek = fileCrypto.getDek(fileId);
+
+  if (!dek) {
+    throw new Error(`Data Encryption Key (DEK) not found in memory for file ${fileId}`);
+  }
+
+  const iv = Buffer.from(metadata.iv, 'base64');
+  const authTag = Buffer.from(metadata.authTag, 'base64');
+
+  const decryptedBuffer = fileCrypto.decryptBuffer(ciphertextBuffer, dek, iv, authTag);
+
+  return {
+    decryptedBuffer,
+    metadata,
+  };
+}
+
 module.exports = {
   getTempDir,
   saveEncryptedFile,
@@ -68,4 +140,6 @@ module.exports = {
   readEncryptedFile,
   readMetadata,
   saveDecryptedFile,
+  storeAndEncryptFile,
+  decryptTempFile,
 };

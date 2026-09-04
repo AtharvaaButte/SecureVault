@@ -33,8 +33,11 @@ app.get('/', (_req, res) => {
   res.json({ message: 'SecureVault Backend API' });
 });
 
-// Initialize database schema and start server
+const { initGeoLocationService } = require('./services/geoLocationService');
+
+// Initialize database schema, IP2Location DB, and start server
 initDb().then(() => {
+  initGeoLocationService();
   app.listen(PORT, () => {
     console.log(`[Server] Express server running on port ${PORT}`);
   });
