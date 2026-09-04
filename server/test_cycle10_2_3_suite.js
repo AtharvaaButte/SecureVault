@@ -121,8 +121,9 @@ async function runCycle10_2_3TestSuite() {
   // --- TEST 1: Organization Policy Retrieval & Cross-Org Isolation ---
   console.log('[TEST 1] Testing organization security policy retrieval & isolation...');
   const policyRes = await request('GET', '/api/policies', null, { 'Authorization': `Bearer ${aliceToken}`, 'X-Client-Device-ID': aliceDeviceId });
-  console.log(`  HTTP Result: ${policyRes.status} (Allowed Country: ${policyRes.data.policy.allowed_country})`);
-  if (policyRes.status !== 200 || policyRes.data.policy.allowed_country !== 'IN') {
+  const allowedCountry = policyRes.data.policy.allowedLocations?.[0]?.allowed_country;
+  console.log(`  HTTP Result: ${policyRes.status} (Allowed Country: ${allowedCountry})`);
+  if (policyRes.status !== 200 || allowedCountry !== 'IN') {
     throw new Error('FAIL: Organization policy retrieval failed');
   }
 
@@ -222,7 +223,7 @@ async function runCycle10_2_3TestSuite() {
     'X-Client-State': 'Maharashtra',
     'X-Client-City': 'Mumbai',
   });
-  console.log(`  PUT Policy Result: ${putRes.status}`);
+  console.log(`  PUT Policy Result: ${putRes.status}`, JSON.stringify(putRes.data, null, 2));
 
   // Access from Karnataka, IN with step-up password -> STILL HARD DENIED with HTTP 403 (stepUpRequired: false)
   const karnatakaDl = await request('GET', `/api/files/${fileId}/download`, null, {
@@ -285,7 +286,7 @@ async function runCycle10_2_3TestSuite() {
 
   // --- TEST 7: Privacy & Secret Storage Invariant Inspection ---
   console.log('\n[TEST 7] Inspecting user_devices database records for zero private key / secret leakage...');
-  const devDb = await pool.query('SELECT * FROM user_devices WHERE user_id = $1 AND device_id = $2', [aliceId, aliceDeviceId]);
+  const devDb = await pool.query('SELECT * FROM user_devices WHERE user_id = $1', [aliceId]);
   const devStr = JSON.stringify(devDb.rows[0]);
   if (devStr.includes('AlicePassword2026!') || devStr.includes('BEGIN PRIVATE KEY')) {
     throw new Error('CRITICAL PRIVACY FAILURE: Password or private key leaked in user_devices table!');

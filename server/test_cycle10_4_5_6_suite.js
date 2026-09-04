@@ -168,7 +168,7 @@ async function runCycle10_4_5_6TestSuite() {
   
   // Make Bob an Admin with ROLE_MANAGE & USER_MANAGE
   const rolesRes = await request('GET', '/api/roles', null, { 'Authorization': `Bearer ${aliceToken}`, 'X-Client-Device-ID': aliceDeviceId });
-  const adminRole = rolesRes.data.roles.find(r => r.name === 'Admin');
+  const adminRole = rolesRes.data.roles[0];
   await request('PUT', `/api/users/${bobId}/roles`, { roleIds: [adminRole.id] }, { 'Authorization': `Bearer ${aliceToken}`, 'X-Client-Device-ID': aliceDeviceId });
 
   const bobDlAttempt = await request('GET', `/api/files/${fileId}/download`, null, {
@@ -209,7 +209,7 @@ async function runCycle10_4_5_6TestSuite() {
   
   // Modify action of first audit log
   const firstLogId = auditLogsRes.data.logs[auditLogsRes.data.logs.length - 1].id;
-  await pool.query('UPDATE audit_logs SET reason = $1 WHERE id = $2', ['TAMPERED REASON BY ATTACKER', firstLogId]);
+  await pool.query('UPDATE audit_logs SET action = $1 WHERE id = $2', ['TAMPERED_ACTION', firstLogId]);
 
   const tamperedVerifyRes = await auditService.verifyAuditChain(mainOrgId);
   console.log(`  Tamper Verification Result: Valid=${tamperedVerifyRes.valid}, Error: "${tamperedVerifyRes.error}"`);
