@@ -4,7 +4,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.process ? process.env.DATABASE_URL : process.env.DATABASE_URL,
   idleTimeoutMillis: 5000,
   connectionTimeoutMillis: 3000,
 });
@@ -38,23 +38,35 @@ async function initDb() {
       );
     `);
 
-    // 2. Users Table (Legacy users.role removed completely)
+    // 2. Users Table (Legacy users.role and users.public_key removed)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
-        public_key TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
     await pool.query(`
       ALTER TABLE users DROP COLUMN IF EXISTS role;
+      ALTER TABLE users DROP COLUMN IF EXISTS public_key;
     `);
 
-    // 3. Permissions Table (System-wide Standard Permission Catalog)
+    // 3. User Keys Table (Separate Cryptographic Identity - X25519)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_keys (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        public_key TEXT NOT NULL,
+        key_algorithm VARCHAR(50) NOT NULL DEFAULT 'X25519',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 4. Permissions Table (System-wide Standard Permission Catalog)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS permissions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -64,19 +76,24 @@ async function initDb() {
       );
     `);
 
-    // 4. Roles Table (Organization-scoped Roles)
+    // 5. Roles Table (Organization-scoped Roles with created_by auditability)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS roles (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
         name VARCHAR(100) NOT NULL,
         description TEXT,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(organization_id, name)
       );
     `);
 
-    // 5. Role-Permissions Junction Table
+    await pool.query(`
+      ALTER TABLE roles ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
+    `);
+
+    // 6. Role-Permissions Junction Table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS role_permissions (
         role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
@@ -85,7 +102,7 @@ async function initDb() {
       );
     `);
 
-    // 6. User-Roles Junction Table
+    // 7. User-Roles Junction Table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_roles (
         user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -94,7 +111,7 @@ async function initDb() {
       );
     `);
 
-    // 7. Files Table
+    // 8. Files Table (sensitivity_level preserved: NORMAL, SENSITIVE, HIGHLY_SENSITIVE)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS files (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -110,7 +127,7 @@ async function initDb() {
       );
     `);
 
-    // 8. File Keys Table (Per-user DEK Wrapping + Resource Access Restrictions)
+    // 9. File Keys Table (DEK Wrapping - X25519 + HKDF + AES-256-GCM + AAD)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS file_keys (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -127,14 +144,26 @@ async function initDb() {
       );
     `);
 
+    // 10. File Restrictions Table (Per-user, per-file operation blocks: FILE_SHARE, FILE_REVOKE, FILE_DELETE)
     await pool.query(`
-      ALTER TABLE file_keys ADD COLUMN IF NOT EXISTS access_level VARCHAR(20) NOT NULL DEFAULT 'READ';
+      CREATE TABLE IF NOT EXISTS file_restrictions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        blocked_operation VARCHAR(100) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(file_id, user_id, blocked_operation)
+      );
     `);
 
-    // Recreate user_devices table cleanly with user_id PRIMARY KEY
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_file_restrictions_lookup ON file_restrictions(file_id, user_id);
+    `);
+
+    // Recreate user_devices table cleanly with user_id PRIMARY KEY if needed
     await pool.query(`DROP TABLE IF EXISTS user_devices CASCADE;`);
 
-    // 9. Simplified User Devices Table (Keyed by user_id for location context)
+    // 11. Simplified User Devices Table (Keyed by user_id for location context)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_devices (
         user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -146,7 +175,7 @@ async function initDb() {
       );
     `);
 
-    // 10. Simplified Organization Policies Table (Core Security Settings)
+    // 12. Organization Policies Table (Core Security Settings)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS organization_policies (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -165,20 +194,24 @@ async function initDb() {
       ALTER TABLE organization_policies DROP COLUMN IF EXISTS allowed_city;
     `);
 
-    // 11. Multiple Allowed Geographic Locations Table
+    // 13. Multiple Allowed Geographic Locations Table (Separate Table)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS organization_geo_policies (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
         allowed_country VARCHAR(10) NOT NULL DEFAULT 'IN',
-        allowed_state VARCHAR(100) NOT NULL DEFAULT 'ALL',
-        allowed_city VARCHAR(100) NOT NULL DEFAULT 'ALL',
+        allowed_state VARCHAR(100),
+        allowed_city VARCHAR(100),
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(organization_id, allowed_country, allowed_state, allowed_city)
       );
     `);
 
-    // 12. Simplified Tamper-Evident Audit Logs Table with Hash Chain
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_geo_policies_org ON organization_geo_policies(organization_id);
+    `);
+
+    // 14. Tamper-Evident Audit Logs Table with Hash Chain & Indexes
     await pool.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -186,6 +219,7 @@ async function initDb() {
         user_id UUID REFERENCES users(id) ON DELETE SET NULL,
         event_type VARCHAR(100) NOT NULL,
         action VARCHAR(50) NOT NULL,
+        resource_type VARCHAR(50) NOT NULL DEFAULT 'FILE',
         resource_id VARCHAR(255),
         ip_address VARCHAR(100),
         location_label VARCHAR(255),
@@ -196,9 +230,36 @@ async function initDb() {
     `);
 
     await pool.query(`
+      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS resource_type VARCHAR(50) NOT NULL DEFAULT 'FILE';
       ALTER TABLE audit_logs DROP COLUMN IF EXISTS user_email;
       ALTER TABLE audit_logs DROP COLUMN IF EXISTS device_id;
       ALTER TABLE audit_logs DROP COLUMN IF EXISTS reason;
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_audit_org_time ON audit_logs(organization_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_logs(user_id, created_at DESC);
+    `);
+
+    // 15. Permission Audit View (Item 9: Read-only reporting view)
+    await pool.query(`
+      CREATE OR REPLACE VIEW user_permission_audit_view AS
+      SELECT 
+        o.id AS organization_id,
+        o.name AS organization_name,
+        u.id AS user_id,
+        u.email AS user_email,
+        r.id AS role_id,
+        r.name AS role_name,
+        p.id AS permission_id,
+        p.name AS permission_name,
+        p.description AS permission_description
+      FROM organizations o
+      JOIN users u ON u.organization_id = o.id
+      JOIN user_roles ur ON ur.user_id = u.id
+      JOIN roles r ON r.id = ur.role_id
+      JOIN role_permissions rp ON rp.role_id = r.id
+      JOIN permissions p ON p.id = rp.permission_id;
     `);
 
     // Seed Standard System Permissions Catalog
@@ -221,7 +282,7 @@ async function initDb() {
       );
     }
 
-    console.log('[DB] Finalized RBAC schema, file_keys access_level, simplified user_devices, organization_geo_policies, and audit_logs initialized successfully.');
+    console.log('[DB] Finalized security schema, user_keys, file_restrictions, geo/audit indexes, and permission audit view initialized successfully.');
   } catch (error) {
     console.error('[DB] Database initialization error:', error.message);
   }

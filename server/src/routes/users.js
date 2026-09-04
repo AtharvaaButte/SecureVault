@@ -7,14 +7,15 @@ const rbacService = require('../services/rbacService');
 
 const router = express.Router();
 
-// GET /api/users/members - List organization members with assigned roles & effective permissions (Requires USER_MANAGE permission)
+// GET /api/users/members - List organization members with assigned roles, effective permissions & user_keys status (Requires USER_MANAGE)
 router.get('/members', verifyToken, requirePermission('USER_MANAGE'), async (req, res) => {
   try {
     const orgId = req.user.orgId;
 
     const result = await pool.query(
-      `SELECT u.id, u.email, u.public_key, u.created_at
+      `SELECT u.id, u.email, u.created_at, uk.public_key
        FROM users u
+       LEFT JOIN user_keys uk ON u.id = uk.user_id
        WHERE u.organization_id = $1
        ORDER BY u.created_at ASC`,
       [orgId]
@@ -42,7 +43,7 @@ router.get('/members', verifyToken, requirePermission('USER_MANAGE'), async (req
   }
 });
 
-// POST /api/users - Create new organization user account (Requires USER_CREATE permission)
+// POST /api/users - Create new organization user account (Requires USER_CREATE)
 router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res) => {
   try {
     const { email, password, roleIds, roleId } = req.body;
@@ -79,7 +80,6 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
       } else if (roleId) {
         targetRoleIds = [roleId];
       } else {
-        // Assign default or existing org roles if available
         const orgRoles = await rbacService.getOrganizationRoles(orgId);
         if (orgRoles.length > 0) {
           targetRoleIds = [orgRoles[0].id];
@@ -122,7 +122,7 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
   }
 });
 
-// PUT /api/users/:id/roles - Update role assignments for a user (Requires USER_MANAGE or ROLE_MANAGE permission)
+// PUT /api/users/:id/roles - Update role assignments for a user (Requires USER_MANAGE)
 router.put('/:id/roles', verifyToken, requirePermission('USER_MANAGE'), async (req, res) => {
   try {
     const targetUserId = req.params.id;
@@ -132,7 +132,6 @@ router.put('/:id/roles', verifyToken, requirePermission('USER_MANAGE'), async (r
       return res.status(400).json({ message: 'At least one role ID must be provided.' });
     }
 
-    // Verify target user belongs to caller's organization
     const userCheck = await pool.query(
       'SELECT id FROM users WHERE id = $1 AND organization_id = $2',
       [targetUserId, req.user.orgId]

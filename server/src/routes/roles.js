@@ -16,6 +16,17 @@ router.get('/permissions', verifyToken, requirePermission('ROLE_MANAGE'), async 
   }
 });
 
+// GET /api/roles/audit - Permission Audit View: Retrieve user-role-permission mapping (Item 9, Requires ROLE_MANAGE)
+router.get('/audit', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res) => {
+  try {
+    const auditRecords = await rbacService.getPermissionAuditRecords(req.user.orgId);
+    res.json({ auditRecords });
+  } catch (error) {
+    console.error('[Get Permission Audit View Error]:', error.message);
+    res.status(500).json({ message: 'Failed to retrieve permission audit view.' });
+  }
+});
+
 // GET /api/roles - List all roles for the current organization (Requires ROLE_MANAGE or USER_MANAGE)
 router.get('/', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res) => {
   try {
@@ -27,7 +38,7 @@ router.get('/', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res) 
   }
 });
 
-// POST /api/roles - Create a custom role in the current organization (Requires ROLE_MANAGE)
+// POST /api/roles - Create a custom role in current org with created_by auditability (Requires ROLE_MANAGE)
 router.post('/', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res) => {
   try {
     const { name, description, permissions } = req.body || {};
@@ -40,7 +51,8 @@ router.post('/', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res)
       req.user.orgId,
       name.trim(),
       description || '',
-      permissions || []
+      permissions || [],
+      req.user.userId
     );
 
     res.status(201).json({

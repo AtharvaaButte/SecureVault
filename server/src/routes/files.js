@@ -76,13 +76,14 @@ router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.sin
       );
     }
 
-    // Audit Event Recording
+    // Audit Event Recording (resource_type: FILE)
     const location = geoService.extractLocation(req);
     await auditService.recordAuditEvent({
       organizationId: req.user.orgId,
       userId: ownerId,
       eventType: 'UPLOAD',
       action: 'ALLOW',
+      resourceType: 'FILE',
       resourceId: fileId,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
@@ -137,7 +138,7 @@ router.get('/', verifyToken, requirePermission('FILE_READ'), async (req, res) =>
   }
 });
 
-// GET /api/files/shared - Get files shared with the current authenticated user (Requires FILE_READ permission)
+// GET /api/files/shared - Get files shared with current user (Requires FILE_READ permission)
 router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, res) => {
   try {
     const currentUserId = req.user.userId;
@@ -211,7 +212,7 @@ router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, 
   }
 });
 
-// POST /api/files/:id/share - Share file with recipient user & set Resource Access Level (READ vs FULL)
+// POST /api/files/:id/share - Share file with recipient user & enforce file_restrictions
 router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, res) => {
   try {
     const fileId = req.params.id;
@@ -223,9 +224,12 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
 
     const normalizedAccessLevel = (accessLevel === 'FULL') ? 'FULL' : 'READ';
 
-    // 1. Verify recipient exists and check organization boundary
+    // 1. Verify recipient exists and check organization boundary + fetch X25519 public_key from user_keys
     const recipientResult = await pool.query(
-      'SELECT id, email, organization_id, public_key FROM users WHERE id = $1',
+      `SELECT u.id, u.email, u.organization_id, uk.public_key 
+       FROM users u
+       LEFT JOIN user_keys uk ON u.id = uk.user_id
+       WHERE u.id = $1`,
       [recipientUserId]
     );
 
@@ -241,10 +245,10 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
     }
 
     if (!recipient.public_key) {
-      return res.status(400).json({ message: 'Recipient does not have a registered cryptographic public key.' });
+      return res.status(400).json({ message: 'Recipient does not have a registered cryptographic public key in user_keys.' });
     }
 
-    // 2. Upsert wrapped DEK + Resource Access Level into file_keys table
+    // 2. Upsert wrapped DEK into file_keys table
     await pool.query(
       `INSERT INTO file_keys 
         (file_id, user_id, sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag, access_level)
@@ -260,13 +264,32 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
       [fileId, recipientUserId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, normalizedAccessLevel]
     );
 
-    // Audit Event Recording
+    // 3. Update file_restrictions table (Item 3: File-level permission restrictions)
+    if (normalizedAccessLevel === 'READ') {
+      const blockedOps = ['FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'];
+      for (const op of blockedOps) {
+        await pool.query(
+          `INSERT INTO file_restrictions (file_id, user_id, blocked_operation)
+           VALUES ($1, $2, $3)
+           ON CONFLICT DO NOTHING`,
+          [fileId, recipientUserId, op]
+        );
+      }
+    } else {
+      await pool.query(
+        `DELETE FROM file_restrictions WHERE file_id = $1 AND user_id = $2`,
+        [fileId, recipientUserId]
+      );
+    }
+
+    // Audit Event Recording (resource_type: FILE)
     const location = geoService.extractLocation(req);
     await auditService.recordAuditEvent({
       organizationId: req.user.orgId,
       userId: req.user.userId,
       eventType: 'SHARE',
       action: 'ALLOW',
+      resourceType: 'FILE',
       resourceId: fileId,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
@@ -290,7 +313,7 @@ router.delete('/:id/share/:recipientUserId', verifyToken, requireFileAccess('REV
     const fileId = req.params.id;
     const recipientUserId = req.params.recipientUserId;
 
-    // Delete file_keys record for recipient
+    // Delete file_keys and file_restrictions records for recipient
     const deleteResult = await pool.query(
       'DELETE FROM file_keys WHERE file_id = $1 AND user_id = $2 RETURNING id',
       [fileId, recipientUserId]
@@ -300,13 +323,19 @@ router.delete('/:id/share/:recipientUserId', verifyToken, requireFileAccess('REV
       return res.status(404).json({ message: 'Share record not found for this user.' });
     }
 
-    // Audit Event Recording
+    await pool.query(
+      'DELETE FROM file_restrictions WHERE file_id = $1 AND user_id = $2',
+      [fileId, recipientUserId]
+    );
+
+    // Audit Event Recording (resource_type: FILE)
     const location = geoService.extractLocation(req);
     await auditService.recordAuditEvent({
       organizationId: req.user.orgId,
       userId: req.user.userId,
       eventType: 'REVOKE',
       action: 'ALLOW',
+      resourceType: 'FILE',
       resourceId: fileId,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
@@ -350,13 +379,14 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
       return res.status(404).json({ message: 'Ciphertext object not found in B2 storage.' });
     }
 
-    // Audit Event Recording
+    // Audit Event Recording (resource_type: FILE)
     const location = geoService.extractLocation(req);
     await auditService.recordAuditEvent({
       organizationId: req.user.orgId,
       userId: currentUserId,
       eventType: 'DOWNLOAD',
       action: 'ALLOW',
+      resourceType: 'FILE',
       resourceId: fileId,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,

@@ -37,7 +37,8 @@ function requirePermission(permissionName) {
 
 /**
  * Middleware: Require file access authorization for READ, SHARE, REVOKE, or DELETE.
- * Enforces BOTH Global Role Permissions AND Resource-Level File Access Restrictions (file_keys.access_level).
+ * Authorization Model:
+ *   Final authorization = Role Permission + File Access + File-Level Restriction (file_restrictions)
  */
 function requireFileAccess(accessType) {
   const permMap = {
@@ -88,7 +89,7 @@ function requireFileAccess(accessType) {
 
       const isOwner = fileRecord.owner_id === req.user.userId;
 
-      // 4. Resource-Level File Access & Restriction Check (file_keys.access_level)
+      // 4. File Access & Resource Check (file_keys)
       if (!isOwner) {
         const keyCheck = await pool.query(
           'SELECT id, access_level FROM file_keys WHERE file_id = $1 AND user_id = $2',
@@ -99,17 +100,21 @@ function requireFileAccess(accessType) {
           return res.status(403).json({ message: 'Access denied. You do not have permission to access this file.' });
         }
 
-        const resourceAccessLevel = keyCheck.rows[0].access_level || 'READ';
+        // 5. File-Specific Permission Restriction Check (file_restrictions table)
+        const restrictionCheck = await pool.query(
+          `SELECT id FROM file_restrictions 
+           WHERE file_id = $1 AND user_id = $2 AND blocked_operation = $3`,
+          [fileId, req.user.userId, requiredPerm]
+        );
 
-        // If high-impact operation (SHARE, REVOKE, DELETE) is requested on a shared file restricted to READ
-        if ((accessType === 'SHARE' || accessType === 'REVOKE' || accessType === 'DELETE') && resourceAccessLevel !== 'FULL') {
+        if (restrictionCheck.rows.length > 0) {
           return res.status(403).json({
-            message: `Access denied. This file was shared with you as READ ONLY. You cannot perform ${accessType} on this resource.`,
+            message: `Access denied. Operation ${requiredPerm} is explicitly restricted on this specific file.`,
           });
         }
       }
 
-      // 5. File Sensitivity Policy & Context Risk Evaluation
+      // 6. File Sensitivity Policy & Context Risk Evaluation
       const riskResult = await riskService.evaluateRisk(
         req.user.userId,
         req,

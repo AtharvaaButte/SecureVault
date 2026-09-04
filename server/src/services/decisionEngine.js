@@ -50,12 +50,13 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
         riskFactors,
       };
 
-      // Audit Record DENY
+      // Audit Record DENY (resourceType: POLICY)
       await auditService.recordAuditEvent({
         organizationId: orgId,
         userId,
         eventType: 'GEO_VIOLATION',
         action: 'DENY',
+        resourceType: 'POLICY',
         resourceId: req.params?.id || req.body?.fileId || null,
         ipAddress: location.ip,
         locationLabel: location.regionLabel,
@@ -69,7 +70,7 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
     }
   }
 
-  // 4. Evaluate Resource Sensitivity Level Policy
+  // 4. Evaluate Resource Sensitivity Level Policy (NORMAL / SENSITIVE / HIGHLY_SENSITIVE preserved)
   const normalizedSensitivity = ['NORMAL', 'SENSITIVE', 'HIGHLY_SENSITIVE'].includes(sensitivityLevel)
     ? sensitivityLevel
     : 'NORMAL';
@@ -99,12 +100,9 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
     [userId]
   );
 
-  let isNewContext = false;
   let isContextShift = false;
 
-  if (deviceRes.rows.length === 0) {
-    isNewContext = true;
-  } else {
+  if (deviceRes.rows.length > 0) {
     const existingContext = deviceRes.rows[0];
     const prevLocation = {
       country: existingContext.last_country,
@@ -123,7 +121,7 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
     if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_LOCATION_SHIFT';
   }
 
-  // 6. Handle Step-Up Verification logic
+  // 6. Handle Step-Up Verification logic (Argon2id password verification preserved)
   if (stepUpTriggered) {
     const reauthPassword = req.headers['x-reauth-password'];
     if (reauthPassword) {
@@ -135,6 +133,7 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
           userId,
           eventType: 'STEP_UP_FAILED',
           action: 'DENY',
+          resourceType: 'AUTH',
           resourceId: req.params?.id || req.body?.fileId || null,
           ipAddress: location.ip,
           locationLabel: location.regionLabel,
@@ -170,6 +169,7 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
         userId,
         eventType: 'STEP_UP_SUCCESS',
         action: 'ALLOW',
+        resourceType: 'AUTH',
         resourceId: req.params?.id || req.body?.fileId || null,
         ipAddress: location.ip,
         locationLabel: location.regionLabel,
@@ -190,6 +190,7 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
         userId,
         eventType: 'STEP_UP_PROMPT',
         action: 'STEP_UP',
+        resourceType: 'AUTH',
         resourceId: req.params?.id || req.body?.fileId || null,
         ipAddress: location.ip,
         locationLabel: location.regionLabel,
