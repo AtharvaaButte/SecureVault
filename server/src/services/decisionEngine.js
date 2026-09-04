@@ -5,18 +5,14 @@ const policyService = require('./policyService');
 const auditService = require('./auditService');
 
 /**
- * Cycle 10.4 Explainable Contextual Risk Decision Engine
+ * Contextual Risk Decision Engine
  */
 
 async function evaluateContextualDecision(userId, req, operationType, sensitivityLevel = 'NORMAL') {
-  const deviceId = req.headers['x-client-device-id'] || 'electron-default-device';
-  const devicePlatform = req.headers['x-client-platform'] || 'Electron-Windows';
-  const userAgent = req.headers['user-agent'] || 'SecureVault-Electron-Client';
-
-  // 1. Location Context Extraction (Cycle 10.3)
+  // 1. Location Context Extraction
   const location = geoService.extractLocation(req);
 
-  // 2. Fetch User & Organization Security Policy (Cycle 10.2)
+  // 2. Fetch User & Organization Security Policy
   const userRes = await pool.query('SELECT organization_id, email, password_hash FROM users WHERE id = $1', [userId]);
   if (userRes.rows.length === 0) {
     return {
@@ -31,18 +27,18 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
 
   const user = userRes.rows[0];
   const orgId = user.organization_id;
-  const orgPolicy = await policyService.getOrganizationPolicy(orgId);
+  const orgPolicyWithGeo = await policyService.getOrganizationPolicy(orgId);
 
   const riskFactors = [];
   let stepUpTriggered = false;
   let triggerReason = '';
   let decisionCode = 'ALLOW_KNOWN_CONTEXT';
 
-  // 3. Evaluate Geographic Policy
-  const geoEval = policyService.evaluateGeoPolicy(orgPolicy, location);
+  // 3. Evaluate Multi-Geographic Policy
+  const geoEval = policyService.evaluateGeoPolicy(orgPolicyWithGeo, location);
 
   if (geoEval.isViolation) {
-    riskFactors.push(`GEO_POLICY_VIOLATION_${geoEval.violationScope}`);
+    riskFactors.push('GEO_POLICY_VIOLATION');
     if (geoEval.enforceGeoFencing) {
       const denyDecision = {
         allow: false,
@@ -58,14 +54,11 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
       await auditService.recordAuditEvent({
         organizationId: orgId,
         userId,
-        userEmail: user.email,
         eventType: 'GEO_VIOLATION',
         action: 'DENY',
-        resourceId: req.params?.id || null,
+        resourceId: req.params?.id || req.body?.fileId || null,
         ipAddress: location.ip,
         locationLabel: location.regionLabel,
-        deviceId,
-        reason: geoEval.reason,
       });
 
       return denyDecision;
@@ -93,51 +86,41 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
     }
   } else if (normalizedSensitivity === 'SENSITIVE') {
     riskFactors.push('SENSITIVE_RESOURCE');
-    if (isHighImpact && orgPolicy.require_stepup_sensitive_file) {
+    if (isHighImpact && orgPolicyWithGeo.require_stepup_sensitive_file) {
       stepUpTriggered = true;
       if (!triggerReason) triggerReason = `Step-up re-authentication required for high-impact operation on SENSITIVE file (${operationType}).`;
       if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_SENSITIVE_RESOURCE';
     }
   }
 
-  // 5. Evaluate Device & Location Context Shift
+  // 5. Evaluate Location Context Shift from user_devices (Keyed by user_id)
   const deviceRes = await pool.query(
-    'SELECT * FROM user_devices WHERE user_id = $1 AND device_id = $2',
-    [userId, deviceId]
+    'SELECT * FROM user_devices WHERE user_id = $1',
+    [userId]
   );
 
-  let isNewDevice = false;
+  let isNewContext = false;
   let isContextShift = false;
-  let isTrusted = false;
 
   if (deviceRes.rows.length === 0) {
-    isNewDevice = true;
-    isTrusted = false;
-    riskFactors.push('NEW_UNTRUSTED_DEVICE');
+    isNewContext = true;
   } else {
-    const existingDevice = deviceRes.rows[0];
-    isTrusted = Boolean(existingDevice.is_trusted);
+    const existingContext = deviceRes.rows[0];
     const prevLocation = {
-      country: existingDevice.last_country,
-      state: existingDevice.last_state,
-      city: existingDevice.last_city,
+      country: existingContext.last_country,
+      state: existingContext.last_state,
+      city: existingContext.last_city,
     };
-    if (geoService.isLocationShift(prevLocation, location) || existingDevice.last_ip !== location.ip) {
+    if (geoService.isLocationShift(prevLocation, location) || existingContext.last_ip !== location.ip) {
       isContextShift = true;
       riskFactors.push('LOCATION_SHIFT_DETECTED');
     }
   }
 
-  if (isContextShift && orgPolicy.require_stepup_new_location) {
+  if (isContextShift && orgPolicyWithGeo.require_stepup_new_location) {
     stepUpTriggered = true;
     if (!triggerReason) triggerReason = `Location shift detected (${location.regionLabel}). Step-up re-authentication required.`;
     if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_LOCATION_SHIFT';
-  }
-
-  if (isHighImpact && (isNewDevice || !isTrusted)) {
-    stepUpTriggered = true;
-    if (!triggerReason) triggerReason = 'Step-up re-authentication required for high-impact operation from untrusted device.';
-    if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_UNTRUSTED_DEVICE';
   }
 
   // 6. Handle Step-Up Verification logic
@@ -150,14 +133,11 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
         await auditService.recordAuditEvent({
           organizationId: orgId,
           userId,
-          userEmail: user.email,
           eventType: 'STEP_UP_FAILED',
           action: 'DENY',
-          resourceId: req.params?.id || null,
+          resourceId: req.params?.id || req.body?.fileId || null,
           ipAddress: location.ip,
           locationLabel: location.regionLabel,
-          deviceId,
-          reason: 'Invalid step-up re-authentication password.',
         });
 
         return {
@@ -171,36 +151,28 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
         };
       }
 
-      // Record trusted device & location update
+      // Record location context update in user_devices
       await pool.query(
-        `INSERT INTO user_devices 
-          (user_id, device_id, device_platform, user_agent, last_ip, last_region, last_country, last_state, last_city, is_trusted)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
-         ON CONFLICT (user_id, device_id) DO UPDATE SET
-           device_platform = EXCLUDED.device_platform,
-           user_agent = EXCLUDED.user_agent,
+        `INSERT INTO user_devices (user_id, last_ip, last_country, last_state, last_city)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id) DO UPDATE SET
            last_ip = EXCLUDED.last_ip,
-           last_region = EXCLUDED.last_region,
            last_country = EXCLUDED.last_country,
            last_state = EXCLUDED.last_state,
            last_city = EXCLUDED.last_city,
-           is_trusted = true,
            last_seen_at = CURRENT_TIMESTAMP`,
-        [userId, deviceId, devicePlatform, userAgent, location.ip, location.regionLabel, location.country, location.state, location.city]
+        [userId, location.ip, location.country, location.state, location.city]
       );
 
       // Audit Successful Step-up
       await auditService.recordAuditEvent({
         organizationId: orgId,
         userId,
-        userEmail: user.email,
         eventType: 'STEP_UP_SUCCESS',
         action: 'ALLOW',
-        resourceId: req.params?.id || null,
+        resourceId: req.params?.id || req.body?.fileId || null,
         ipAddress: location.ip,
         locationLabel: location.regionLabel,
-        deviceId,
-        reason: `Step-up re-authentication verified for operation ${operationType}.`,
       });
 
       return {
@@ -216,14 +188,11 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
       await auditService.recordAuditEvent({
         organizationId: orgId,
         userId,
-        userEmail: user.email,
         eventType: 'STEP_UP_PROMPT',
         action: 'STEP_UP',
-        resourceId: req.params?.id || null,
+        resourceId: req.params?.id || req.body?.fileId || null,
         ipAddress: location.ip,
         locationLabel: location.regionLabel,
-        deviceId,
-        reason: triggerReason,
       });
 
       return {
@@ -238,29 +207,18 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
     }
   }
 
-  // 7. Standard ALLOW under trusted context
-  if (isNewDevice) {
-    await pool.query(
-      `INSERT INTO user_devices 
-        (user_id, device_id, device_platform, user_agent, last_ip, last_region, last_country, last_state, last_city, is_trusted)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)
-       ON CONFLICT (user_id, device_id) DO UPDATE SET
-         last_ip = EXCLUDED.last_ip,
-         last_region = EXCLUDED.last_region,
-         last_country = EXCLUDED.last_country,
-         last_state = EXCLUDED.last_state,
-         last_city = EXCLUDED.last_city,
-         last_seen_at = CURRENT_TIMESTAMP`,
-      [userId, deviceId, devicePlatform, userAgent, location.ip, location.regionLabel, location.country, location.state, location.city]
-    );
-  } else {
-    await pool.query(
-      `UPDATE user_devices 
-       SET last_ip = $1, last_region = $2, last_country = $3, last_state = $4, last_city = $5, last_seen_at = CURRENT_TIMESTAMP 
-       WHERE user_id = $6 AND device_id = $7`,
-      [location.ip, location.regionLabel, location.country, location.state, location.city, userId, deviceId]
-    );
-  }
+  // 7. Standard ALLOW under trusted context -> Record location context
+  await pool.query(
+    `INSERT INTO user_devices (user_id, last_ip, last_country, last_state, last_city)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (user_id) DO UPDATE SET
+       last_ip = EXCLUDED.last_ip,
+       last_country = EXCLUDED.last_country,
+       last_state = EXCLUDED.last_state,
+       last_city = EXCLUDED.last_city,
+       last_seen_at = CURRENT_TIMESTAMP`,
+    [userId, location.ip, location.country, location.state, location.city]
+  );
 
   return {
     allow: true,

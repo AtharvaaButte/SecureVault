@@ -38,20 +38,23 @@ async function initDb() {
       );
     `);
 
-    // 2. Users Table
+    // 2. Users Table (Legacy users.role removed completely)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
-        role VARCHAR(20) NOT NULL DEFAULT 'USER',
         public_key TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    // 3. Permissions Table (System-wide Standard Permissions)
+    await pool.query(`
+      ALTER TABLE users DROP COLUMN IF EXISTS role;
+    `);
+
+    // 3. Permissions Table (System-wide Standard Permission Catalog)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS permissions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -107,11 +110,7 @@ async function initDb() {
       );
     `);
 
-    await pool.query(`
-      ALTER TABLE files ADD COLUMN IF NOT EXISTS sensitivity_level VARCHAR(30) NOT NULL DEFAULT 'NORMAL' CHECK (sensitivity_level IN ('NORMAL', 'SENSITIVE', 'HIGHLY_SENSITIVE'));
-    `);
-
-    // 8. File Keys Table (Per-user DEK Wrapping)
+    // 8. File Keys Table (Per-user DEK Wrapping + Resource Access Restrictions)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS file_keys (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,45 +121,36 @@ async function initDb() {
         wrap_salt TEXT NOT NULL,
         wrap_iv TEXT NOT NULL,
         wrap_auth_tag TEXT NOT NULL,
+        access_level VARCHAR(20) NOT NULL DEFAULT 'READ' CHECK (access_level IN ('READ', 'FULL')),
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(file_id, user_id)
       );
     `);
 
-    // 9. User Devices Table (Phase 9C/10.3 Context & Geo Tracking)
+    await pool.query(`
+      ALTER TABLE file_keys ADD COLUMN IF NOT EXISTS access_level VARCHAR(20) NOT NULL DEFAULT 'READ';
+    `);
+
+    // Recreate user_devices table cleanly with user_id PRIMARY KEY
+    await pool.query(`DROP TABLE IF EXISTS user_devices CASCADE;`);
+
+    // 9. Simplified User Devices Table (Keyed by user_id for location context)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_devices (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        device_id VARCHAR(255) NOT NULL,
-        device_platform VARCHAR(100),
-        user_agent TEXT,
+        user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         last_ip VARCHAR(100),
-        last_region VARCHAR(100),
         last_country VARCHAR(10) DEFAULT 'IN',
         last_state VARCHAR(100) DEFAULT 'Maharashtra',
         last_city VARCHAR(100) DEFAULT 'Mumbai',
-        is_trusted BOOLEAN NOT NULL DEFAULT true,
-        first_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(user_id, device_id)
+        last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    await pool.query(`
-      ALTER TABLE user_devices ADD COLUMN IF NOT EXISTS last_country VARCHAR(10) DEFAULT 'IN';
-      ALTER TABLE user_devices ADD COLUMN IF NOT EXISTS last_state VARCHAR(100) DEFAULT 'Maharashtra';
-      ALTER TABLE user_devices ADD COLUMN IF NOT EXISTS last_city VARCHAR(100) DEFAULT 'Mumbai';
-    `);
-
-    // 10. Organization Policies Table (Cycle 10.2 Organization Security Policies)
+    // 10. Simplified Organization Policies Table (Core Security Settings)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS organization_policies (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id UUID UNIQUE NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-        allowed_country VARCHAR(10) NOT NULL DEFAULT 'IN',
-        allowed_state VARCHAR(100) NOT NULL DEFAULT 'ALL',
-        allowed_city VARCHAR(100) NOT NULL DEFAULT 'ALL',
         require_stepup_new_location BOOLEAN NOT NULL DEFAULT true,
         require_stepup_sensitive_file BOOLEAN NOT NULL DEFAULT true,
         enforce_geo_fencing BOOLEAN NOT NULL DEFAULT false,
@@ -169,27 +159,49 @@ async function initDb() {
       );
     `);
 
-    // 11. Audit Logs Table (Cycle 10.6 Tamper-Evident Audit Logs with Hash Chain)
+    await pool.query(`
+      ALTER TABLE organization_policies DROP COLUMN IF EXISTS allowed_country;
+      ALTER TABLE organization_policies DROP COLUMN IF EXISTS allowed_state;
+      ALTER TABLE organization_policies DROP COLUMN IF EXISTS allowed_city;
+    `);
+
+    // 11. Multiple Allowed Geographic Locations Table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS organization_geo_policies (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        allowed_country VARCHAR(10) NOT NULL DEFAULT 'IN',
+        allowed_state VARCHAR(100) NOT NULL DEFAULT 'ALL',
+        allowed_city VARCHAR(100) NOT NULL DEFAULT 'ALL',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(organization_id, allowed_country, allowed_state, allowed_city)
+      );
+    `);
+
+    // 12. Simplified Tamper-Evident Audit Logs Table with Hash Chain
     await pool.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
         user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-        user_email VARCHAR(255),
         event_type VARCHAR(100) NOT NULL,
         action VARCHAR(50) NOT NULL,
         resource_id VARCHAR(255),
         ip_address VARCHAR(100),
         location_label VARCHAR(255),
-        device_id VARCHAR(255),
-        reason TEXT,
         previous_hash VARCHAR(64) NOT NULL,
         current_hash VARCHAR(64) NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    // Seed Standard System Permissions (Administrative vs File Permissions)
+    await pool.query(`
+      ALTER TABLE audit_logs DROP COLUMN IF EXISTS user_email;
+      ALTER TABLE audit_logs DROP COLUMN IF EXISTS device_id;
+      ALTER TABLE audit_logs DROP COLUMN IF EXISTS reason;
+    `);
+
+    // Seed Standard System Permissions Catalog
     const standardPermissions = [
       ['FILE_READ', 'Download and decrypt owned or explicitly shared files'],
       ['FILE_UPLOAD', 'Encrypt and upload new file ciphertexts to cloud storage'],
@@ -209,7 +221,7 @@ async function initDb() {
       );
     }
 
-    console.log('[DB] Database schema, Cycle 10.2/10.3 policies, and Cycle 10.6 audit_logs initialized successfully.');
+    console.log('[DB] Finalized RBAC schema, file_keys access_level, simplified user_devices, organization_geo_policies, and audit_logs initialized successfully.');
   } catch (error) {
     console.error('[DB] Database initialization error:', error.message);
   }

@@ -58,36 +58,34 @@ router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.sin
 
     const savedFile = result.rows[0];
 
-    // 3. If owner DEK wrapping metadata is provided, insert record into file_keys table for DEK recovery
+    // 3. If owner DEK wrapping metadata is provided, insert record into file_keys table (Owner has FULL access_level)
     if (wrappedDek && wrapSalt && wrapIv && wrapAuthTag && senderPublicKey) {
       await pool.query(
         `INSERT INTO file_keys 
-          (file_id, user_id, sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+          (file_id, user_id, sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag, access_level)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (file_id, user_id) DO UPDATE SET
            sender_public_key = EXCLUDED.sender_public_key,
            wrapped_dek = EXCLUDED.wrapped_dek,
            wrap_salt = EXCLUDED.wrap_salt,
            wrap_iv = EXCLUDED.wrap_iv,
            wrap_auth_tag = EXCLUDED.wrap_auth_tag,
+           access_level = 'FULL',
            created_at = CURRENT_TIMESTAMP`,
-        [fileId, ownerId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag]
+        [fileId, ownerId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, 'FULL']
       );
     }
 
-    // Audit Event Recording (Cycle 10.6)
+    // Audit Event Recording
     const location = geoService.extractLocation(req);
     await auditService.recordAuditEvent({
       organizationId: req.user.orgId,
       userId: ownerId,
-      userEmail: req.user.email,
       eventType: 'UPLOAD',
       action: 'ALLOW',
       resourceId: fileId,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
-      deviceId: req.headers['x-client-device-id'] || 'electron-default-device',
-      reason: `Uploaded file ${originalName} (Sensitivity: ${normalizedSensitivity}).`,
     });
 
     res.status(201).json({
@@ -146,7 +144,7 @@ router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, r
 
     const result = await pool.query(
       `SELECT f.id, f.original_name, f.original_size, f.storage_key, f.encryption_algorithm, f.iv, f.auth_tag, f.sensitivity_level, f.created_at,
-              fk.sender_public_key, fk.wrapped_dek, fk.wrap_salt, fk.wrap_iv, fk.wrap_auth_tag,
+              fk.sender_public_key, fk.wrapped_dek, fk.wrap_salt, fk.wrap_iv, fk.wrap_auth_tag, fk.access_level,
               u.email AS owner_email
        FROM files f
        INNER JOIN file_keys fk ON f.id = fk.file_id
@@ -165,6 +163,7 @@ router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, r
       iv: row.iv,
       authTag: row.auth_tag,
       sensitivityLevel: row.sensitivity_level,
+      accessLevel: row.access_level || 'READ',
       createdAt: row.created_at,
       ownerEmail: row.owner_email,
       wrapping: {
@@ -183,14 +182,14 @@ router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, r
   }
 });
 
-// GET /api/files/:id/shares - Get list of users a file is shared with (Requires FILE_REVOKE & Owner Access)
+// GET /api/files/:id/shares - Get list of users a file is shared with (Requires FILE_REVOKE & Access)
 router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, res) => {
   try {
     const fileId = req.params.id;
     const currentUserId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT fk.user_id, u.email, fk.created_at
+      `SELECT fk.user_id, u.email, fk.access_level, fk.created_at
        FROM file_keys fk
        JOIN users u ON fk.user_id = u.id
        WHERE fk.file_id = $1 AND fk.user_id != $2
@@ -201,6 +200,7 @@ router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, 
     const shares = result.rows.map(row => ({
       userId: row.user_id,
       email: row.email,
+      accessLevel: row.access_level || 'READ',
       createdAt: row.created_at,
     }));
 
@@ -211,15 +211,17 @@ router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, 
   }
 });
 
-// POST /api/files/:id/share - Share file with a recipient user (Requires FILE_SHARE & Owner Access)
+// POST /api/files/:id/share - Share file with recipient user & set Resource Access Level (READ vs FULL)
 router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, res) => {
   try {
     const fileId = req.params.id;
-    const { recipientUserId, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey } = req.body;
+    const { recipientUserId, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey, accessLevel } = req.body;
 
     if (!recipientUserId || !wrappedDek || !wrapSalt || !wrapIv || !wrapAuthTag || !senderPublicKey) {
       return res.status(400).json({ message: 'Missing required sharing fields.' });
     }
+
+    const normalizedAccessLevel = (accessLevel === 'FULL') ? 'FULL' : 'READ';
 
     // 1. Verify recipient exists and check organization boundary
     const recipientResult = await pool.query(
@@ -233,7 +235,7 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
 
     const recipient = recipientResult.rows[0];
 
-    // ORGANIZATION BOUNDARY CHECK: Owner and recipient MUST belong to the same organization
+    // ORGANIZATION BOUNDARY CHECK
     if (recipient.organization_id !== req.user.orgId) {
       return res.status(403).json({ message: 'Access denied. Cross-organization file sharing is strictly prohibited.' });
     }
@@ -242,19 +244,20 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
       return res.status(400).json({ message: 'Recipient does not have a registered cryptographic public key.' });
     }
 
-    // 2. Upsert wrapped DEK into file_keys table
+    // 2. Upsert wrapped DEK + Resource Access Level into file_keys table
     await pool.query(
       `INSERT INTO file_keys 
-        (file_id, user_id, sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (file_id, user_id, sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag, access_level)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (file_id, user_id) DO UPDATE SET
          sender_public_key = EXCLUDED.sender_public_key,
          wrapped_dek = EXCLUDED.wrapped_dek,
          wrap_salt = EXCLUDED.wrap_salt,
          wrap_iv = EXCLUDED.wrap_iv,
          wrap_auth_tag = EXCLUDED.wrap_auth_tag,
+         access_level = EXCLUDED.access_level,
          created_at = CURRENT_TIMESTAMP`,
-      [fileId, recipientUserId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag]
+      [fileId, recipientUserId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, normalizedAccessLevel]
     );
 
     // Audit Event Recording
@@ -262,20 +265,18 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
     await auditService.recordAuditEvent({
       organizationId: req.user.orgId,
       userId: req.user.userId,
-      userEmail: req.user.email,
       eventType: 'SHARE',
       action: 'ALLOW',
       resourceId: fileId,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
-      deviceId: req.headers['x-client-device-id'] || 'electron-default-device',
-      reason: `Shared file ${fileId} with recipient ${recipient.email}.`,
     });
 
     res.status(201).json({
-      message: 'File shared successfully with recipient.',
+      message: `File shared successfully with recipient (${normalizedAccessLevel} access level).`,
       fileId,
       recipientUserId,
+      accessLevel: normalizedAccessLevel,
     });
   } catch (error) {
     console.error('[File Sharing Error]:', error.message);
@@ -283,7 +284,7 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
   }
 });
 
-// DELETE /api/files/:id/share/:recipientUserId - Revoke a user's share permission (Requires FILE_REVOKE & Owner Access)
+// DELETE /api/files/:id/share/:recipientUserId - Revoke a user's share permission (Requires FILE_REVOKE & Access)
 router.delete('/:id/share/:recipientUserId', verifyToken, requireFileAccess('REVOKE'), async (req, res) => {
   try {
     const fileId = req.params.id;
@@ -304,14 +305,11 @@ router.delete('/:id/share/:recipientUserId', verifyToken, requireFileAccess('REV
     await auditService.recordAuditEvent({
       organizationId: req.user.orgId,
       userId: req.user.userId,
-      userEmail: req.user.email,
       eventType: 'REVOKE',
       action: 'ALLOW',
       resourceId: fileId,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
-      deviceId: req.headers['x-client-device-id'] || 'electron-default-device',
-      reason: `Revoked share access for user ${recipientUserId} on file ${fileId}.`,
     });
 
     res.json({
@@ -325,7 +323,7 @@ router.delete('/:id/share/:recipientUserId', verifyToken, requireFileAccess('REV
   }
 });
 
-// GET /api/files/:id/download - Download encrypted ciphertext from B2 and metadata from PostgreSQL (Requires FILE_READ & Resource Access)
+// GET /api/files/:id/download - Download encrypted ciphertext from B2 and metadata from PostgreSQL (Requires FILE_READ & Access)
 router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, res) => {
   try {
     const currentUserId = req.user.userId;
@@ -339,9 +337,9 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
 
     const fileRecord = fileResult.rows[0];
 
-    // Fetch file_keys record for requesting user (owner or recipient)
+    // Fetch file_keys record for requesting user
     const keyResult = await pool.query(
-      'SELECT sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag FROM file_keys WHERE file_id = $1 AND user_id = $2',
+      'SELECT sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag, access_level FROM file_keys WHERE file_id = $1 AND user_id = $2',
       [fileId, currentUserId]
     );
 
@@ -357,14 +355,11 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
     await auditService.recordAuditEvent({
       organizationId: req.user.orgId,
       userId: currentUserId,
-      userEmail: req.user.email,
       eventType: 'DOWNLOAD',
       action: 'ALLOW',
       resourceId: fileId,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
-      deviceId: req.headers['x-client-device-id'] || 'electron-default-device',
-      reason: `Downloaded file ${fileRecord.original_name} (Sensitivity: ${fileRecord.sensitivity_level}).`,
     });
 
     // Return base64 ciphertext and encryption metadata
@@ -391,6 +386,7 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
         wrapSalt: shareRecord.wrap_salt,
         wrapIv: shareRecord.wrap_iv,
         wrapAuthTag: shareRecord.wrap_auth_tag,
+        accessLevel: shareRecord.access_level || 'READ',
       };
     }
 

@@ -15,7 +15,7 @@ function generateToken(payload) {
   return jwt.sign(payload, secret, { expiresIn });
 }
 
-// POST /api/auth/register - Register organization and initial ADMIN user
+// POST /api/auth/register - Register organization and initial owner user
 router.post('/register', async (req, res) => {
   const { orgName, email, password } = req.body;
 
@@ -24,20 +24,15 @@ router.post('/register', async (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
-  const deviceId = req.headers['x-client-device-id'] || req.body.deviceId || 'electron-default-device';
-  const devicePlatform = req.headers['x-client-platform'] || 'Electron-Windows';
-  const userAgent = req.headers['user-agent'] || 'SecureVault-Electron-Client';
   const location = geoService.extractLocation(req);
 
   const client = await pool.connect();
   try {
-    // Check if user email already exists
     const existingUser = await client.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
     if (existingUser.rows.length > 0) {
       return res.status(400).json({ message: 'A user with this email address already exists.' });
     }
 
-    // Hash password with Argon2id
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
 
     await client.query('BEGIN');
@@ -49,60 +44,58 @@ router.post('/register', async (req, res) => {
     );
     const org = orgResult.rows[0];
 
-    // Seed default RBAC roles (Admin & Member) and standard permissions for organization
-    const { adminRoleId } = await rbacService.seedOrganizationRoles(client, org.id);
+    // Create initial Owner role for org
+    const ownerRoleId = await rbacService.createInitialOrgRole(client, org.id, 'Owner', 'Organization Owner with full capabilities');
 
-    // Create initial admin user
+    // Create initial user (without legacy role column)
     const userResult = await client.query(
-      'INSERT INTO users (organization_id, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, email, role, created_at',
-      [org.id, normalizedEmail, passwordHash, 'ADMIN']
+      'INSERT INTO users (organization_id, email, password_hash) VALUES ($1, $2, $3) RETURNING id, email, created_at',
+      [org.id, normalizedEmail, passwordHash]
     );
     const user = userResult.rows[0];
 
-    // Assign Admin role to initial user in user_roles table
-    await rbacService.assignRoleToUser(client, user.id, adminRoleId);
+    // Assign Owner role to initial user
+    await rbacService.assignRoleToUser(client, user.id, ownerRoleId);
 
-    // Register initial trusted device in user_devices table
+    // Register initial location context in user_devices
     await client.query(
-      `INSERT INTO user_devices 
-        (user_id, device_id, device_platform, user_agent, last_ip, last_region, last_country, last_state, last_city, is_trusted)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
-       ON CONFLICT (user_id, device_id) DO UPDATE SET
-         last_ip = EXCLUDED.last_ip, last_region = EXCLUDED.last_region, last_seen_at = CURRENT_TIMESTAMP`,
-      [user.id, deviceId, devicePlatform, userAgent, location.ip, location.regionLabel, location.country, location.state, location.city]
+      `INSERT INTO user_devices (user_id, last_ip, last_country, last_state, last_city)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id) DO UPDATE SET
+         last_ip = EXCLUDED.last_ip, last_seen_at = CURRENT_TIMESTAMP`,
+      [user.id, location.ip, location.country, location.state, location.city]
     );
 
     await client.query('COMMIT');
 
-    // Audit Event Recording (Cycle 10.6)
+    const userRoles = await rbacService.getUserRoles(user.id);
+    const userPermissions = await rbacService.getUserPermissions(user.id);
+
+    // Audit Event Recording
     await auditService.recordAuditEvent({
       organizationId: org.id,
       userId: user.id,
-      userEmail: user.email,
       eventType: 'REGISTER',
       action: 'ALLOW',
       resourceId: org.id,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
-      deviceId,
-      reason: 'Organization registered and initial Admin account created.',
     });
 
     const token = generateToken({
       userId: user.id,
       orgId: org.id,
       email: user.email,
-      role: user.role,
-      deviceId,
     });
 
     res.status(201).json({
-      message: 'Organization and Admin account registered successfully',
+      message: 'Organization and account registered successfully',
       token,
       user: {
         id: user.id,
         email: user.email,
-        role: user.role,
+        roles: userRoles,
+        permissions: userPermissions,
         createdAt: user.created_at,
       },
       organization: {
@@ -129,14 +122,11 @@ router.post('/login', async (req, res) => {
   }
 
   const normalizedEmail = email.trim().toLowerCase();
-  const deviceId = req.headers['x-client-device-id'] || req.body.deviceId || 'electron-default-device';
-  const devicePlatform = req.headers['x-client-platform'] || 'Electron-Windows';
-  const userAgent = req.headers['user-agent'] || 'SecureVault-Electron-Client';
   const location = geoService.extractLocation(req);
 
   try {
     const result = await pool.query(
-      `SELECT u.id, u.email, u.password_hash, u.role, u.created_at, 
+      `SELECT u.id, u.email, u.password_hash, u.created_at, 
               o.id as organization_id, o.name as organization_name 
        FROM users u 
        JOIN organizations o ON u.organization_id = o.id 
@@ -150,54 +140,51 @@ router.post('/login', async (req, res) => {
 
     const user = result.rows[0];
 
-    // Verify password hash using Argon2id
     const isValidPassword = await argon2.verify(user.password_hash, password);
     if (!isValidPassword) {
       await auditService.recordAuditEvent({
         organizationId: user.organization_id,
         userId: user.id,
-        userEmail: user.email,
         eventType: 'LOGIN_FAILED',
         action: 'DENY',
         resourceId: null,
         ipAddress: location.ip,
         locationLabel: location.regionLabel,
-        deviceId,
-        reason: 'Invalid email or password.',
       });
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
-    // Register/update trusted device in user_devices table on successful password authentication
+    // Update location context in user_devices
     await pool.query(
-      `INSERT INTO user_devices 
-        (user_id, device_id, device_platform, user_agent, last_ip, last_region, last_country, last_state, last_city, is_trusted)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
-       ON CONFLICT (user_id, device_id) DO UPDATE SET
-         last_ip = EXCLUDED.last_ip, last_region = EXCLUDED.last_region, last_seen_at = CURRENT_TIMESTAMP`,
-      [user.id, deviceId, devicePlatform, userAgent, location.ip, location.regionLabel, location.country, location.state, location.city]
+      `INSERT INTO user_devices (user_id, last_ip, last_country, last_state, last_city)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id) DO UPDATE SET
+         last_ip = EXCLUDED.last_ip,
+         last_country = EXCLUDED.last_country,
+         last_state = EXCLUDED.last_state,
+         last_city = EXCLUDED.last_city,
+         last_seen_at = CURRENT_TIMESTAMP`,
+      [user.id, location.ip, location.country, location.state, location.city]
     );
+
+    const userRoles = await rbacService.getUserRoles(user.id);
+    const userPermissions = await rbacService.getUserPermissions(user.id);
 
     // Audit Successful Login
     await auditService.recordAuditEvent({
       organizationId: user.organization_id,
       userId: user.id,
-      userEmail: user.email,
       eventType: 'LOGIN',
       action: 'ALLOW',
       resourceId: null,
       ipAddress: location.ip,
       locationLabel: location.regionLabel,
-      deviceId,
-      reason: 'User authentication successful.',
     });
 
     const token = generateToken({
       userId: user.id,
       orgId: user.organization_id,
       email: user.email,
-      role: user.role,
-      deviceId,
     });
 
     res.json({
@@ -206,7 +193,8 @@ router.post('/login', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        role: user.role,
+        roles: userRoles,
+        permissions: userPermissions,
         createdAt: user.created_at,
       },
       organization: {
@@ -224,7 +212,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.email, u.role, u.created_at, 
+      `SELECT u.id, u.email, u.created_at, 
               o.id as organization_id, o.name as organization_name 
        FROM users u 
        JOIN organizations o ON u.organization_id = o.id 
@@ -237,12 +225,15 @@ router.get('/me', verifyToken, async (req, res) => {
     }
 
     const user = result.rows[0];
+    const userRoles = await rbacService.getUserRoles(user.id);
+    const userPermissions = await rbacService.getUserPermissions(user.id);
 
     res.json({
       user: {
         id: user.id,
         email: user.email,
-        role: user.role,
+        roles: userRoles,
+        permissions: userPermissions,
         createdAt: user.created_at,
       },
       organization: {

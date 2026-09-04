@@ -9,48 +9,49 @@ export default function App() {
   const [userPermissions, setUserPermissions] = useState([]);
   const [userAssignedRoles, setUserAssignedRoles] = useState([]);
 
-  // Cycle 2 Crypto Identity state
+  // Crypto Identity state
   const [cryptoIdentity, setCryptoIdentity] = useState({
     protected: false,
     registered: false,
     publicKey: null,
   });
 
-  // Cycle 3 File Encryption state
+  // Local File Encryption state
   const [selectedFile, setSelectedFile] = useState(null);
   const [encryptResult, setEncryptResult] = useState(null);
-  const [decryptResult, setDecryptResult] = useState(null);
-  const [integrityResult, setIntegrityResult] = useState(null);
 
-  // Cycle 4 + Phase 9D Upload & File Listing state
+  // Upload & File Listing state
   const [uploadSensitivity, setUploadSensitivity] = useState('NORMAL');
-  const [uploadResult, setUploadResult] = useState(null);
   const [fileList, setFileList] = useState([]);
   const [downloadStatus, setDownloadStatus] = useState({});
 
-  // Cycle 6 & 7 E2EE File Sharing & Access Control state
+  // E2EE File Sharing state
   const [sharedFileList, setSharedFileList] = useState([]);
   const [orgUsers, setOrgUsers] = useState([]);
   const [shareRecipients, setShareRecipients] = useState({});
+  const [shareAccessLevels, setShareAccessLevels] = useState({});
   const [shareStatus, setShareStatus] = useState({});
   const [sharedDownloadStatus, setSharedDownloadStatus] = useState({});
   const [fileShares, setFileShares] = useState({});
 
-  // Cycle 10.1 RBAC & Roles state
+  // RBAC & Roles state
   const [orgRoles, setOrgRoles] = useState([]);
   const [allPermissions, setAllPermissions] = useState([]);
   const [newRoleName, setNewRoleName] = useState('');
   const [newRoleDesc, setNewRoleDesc] = useState('');
   const [newRolePerms, setNewRolePerms] = useState([]);
 
-  // Cycle 10.2 & 10.3 Organization Security Policies & Geo-Context state
+  // Organization Security Policies & Multi-Geo Locations state
   const [orgPolicy, setOrgPolicy] = useState(null);
+  const [newGeoCountry, setNewGeoCountry] = useState('IN');
+  const [newGeoState, setNewGeoState] = useState('ALL');
+  const [newGeoCity, setNewGeoCity] = useState('ALL');
 
-  // Cycle 10.6 Security Event Audit Logs & Hash Chain state
+  // Security Event Audit Logs & Hash Chain state
   const [auditLogs, setAuditLogs] = useState([]);
   const [auditVerification, setAuditVerification] = useState(null);
 
-  // Phase 9C/9D Risk & Security Panel state
+  // Security Context & Step-Up Modal state
   const [showSecurityPanel, setShowSecurityPanel] = useState(false);
   const [stepUpModal, setStepUpModal] = useState({ show: false, reason: '', pendingAction: null });
   const [stepUpPassword, setStepUpPassword] = useState('');
@@ -72,7 +73,6 @@ export default function App() {
   const [orgMembers, setOrgMembers] = useState([]);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
-  const [newUserRole, setNewUserRole] = useState('USER');
 
   const parseJsonResponse = async (res, fallbackMessage = 'Request failed') => {
     const contentType = res.headers.get('content-type');
@@ -108,7 +108,6 @@ export default function App() {
     }
   };
 
-  // Fetch active recipient shares for a given owned file (Cycle 7)
   const fetchFileShares = async (fileId, authToken = token) => {
     if (!window.electronAPI || typeof window.electronAPI.getFileShares !== 'function' || !authToken) return;
     try {
@@ -121,7 +120,6 @@ export default function App() {
     }
   };
 
-  // Fetch current user's file listing (Cycle 4 + 7 + 9D)
   const fetchUserFiles = async (authToken = token) => {
     let files = [];
     if (window.electronAPI && typeof window.electronAPI.getUserFiles === 'function') {
@@ -156,7 +154,6 @@ export default function App() {
     }
   };
 
-  // Fetch Admin Organization Members List with Roles & Permissions
   const fetchOrgMembers = async (authToken = token) => {
     try {
       const res = await fetch(`${API_BASE}/users/members`, {
@@ -176,7 +173,6 @@ export default function App() {
     }
   };
 
-  // Fetch Organization Custom Roles (Cycle 10.1)
   const fetchOrgRoles = async (authToken = token) => {
     try {
       const res = await fetch(`${API_BASE}/roles`, {
@@ -191,7 +187,6 @@ export default function App() {
     }
   };
 
-  // Fetch System Available Permissions (Cycle 10.1)
   const fetchAllPermissions = async (authToken = token) => {
     try {
       const res = await fetch(`${API_BASE}/roles/permissions`, {
@@ -206,7 +201,6 @@ export default function App() {
     }
   };
 
-  // Fetch Organization Security Policy (Cycle 10.2)
   const fetchOrgPolicy = async (authToken = token) => {
     try {
       const res = await fetch(`${API_BASE}/policies`, {
@@ -221,7 +215,6 @@ export default function App() {
     }
   };
 
-  // Fetch Security Audit Logs (Cycle 10.6)
   const fetchAuditLogs = async (authToken = token) => {
     try {
       const res = await fetch(`${API_BASE}/audit`, {
@@ -236,7 +229,6 @@ export default function App() {
     }
   };
 
-  // Verify Security Audit Hash Chain Integrity (Cycle 10.6)
   const handleVerifyAuditChain = async () => {
     setLoading(true);
     setError(null);
@@ -259,7 +251,6 @@ export default function App() {
     }
   };
 
-  // Update Organization Security Policy (Cycle 10.2)
   const handleUpdatePolicy = async (newPolicyFields) => {
     setLoading(true);
     setError(null);
@@ -284,7 +275,53 @@ export default function App() {
     }
   };
 
-  // Fetch directory of other users in organization for sharing (Cycle 6)
+  const handleAddGeoLocation = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/policies/locations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          allowedCountry: newGeoCountry,
+          allowedState: newGeoState,
+          allowedCity: newGeoCity,
+        }),
+      });
+
+      const data = await parseJsonResponse(res, 'Failed to add geographic location policy');
+      setOrgPolicy(data.policy);
+      setSuccessMsg('Allowed geographic location policy added.');
+    } catch (err) {
+      setError(`[Geo Policy Error]: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemoveGeoLocation = async (locId) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/policies/locations/${locId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      const data = await parseJsonResponse(res, 'Failed to remove geographic location policy');
+      setOrgPolicy(data.policy);
+      setSuccessMsg('Geographic location policy removed.');
+    } catch (err) {
+      setError(`[Geo Policy Error]: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchOrgUsers = async (authToken = token) => {
     if (!window.electronAPI || typeof window.electronAPI.getOrganizationUsers !== 'function' || !authToken) return;
     try {
@@ -297,7 +334,6 @@ export default function App() {
     }
   };
 
-  // Fetch files shared with current user (Cycle 6)
   const fetchSharedFiles = async (authToken = token) => {
     if (!window.electronAPI || typeof window.electronAPI.getSharedFiles !== 'function') return;
     try {
@@ -312,7 +348,6 @@ export default function App() {
     }
   };
 
-  // Helper to sync local identity with backend (Cycle 2)
   const syncCryptographicIdentity = async (authToken) => {
     if (!window.electronAPI || typeof window.electronAPI.ensureIdentity !== 'function') return;
     try {
@@ -340,7 +375,6 @@ export default function App() {
     }
   };
 
-  // Auto restore session and identity on launch
   useEffect(() => {
     async function restoreSession() {
       setInitializing(true);
@@ -356,6 +390,8 @@ export default function App() {
               setToken(storedToken);
               setCurrentUser(data.user);
               setCurrentOrg(data.organization);
+              setUserPermissions(data.user.permissions || []);
+              setUserAssignedRoles(data.user.roles || []);
               await syncCryptographicIdentity(storedToken);
               await fetchUserFiles(storedToken);
               await fetchOrgUsers(storedToken);
@@ -401,6 +437,8 @@ export default function App() {
       setToken(data.token);
       setCurrentUser(data.user);
       setCurrentOrg(data.organization);
+      setUserPermissions(data.user.permissions || []);
+      setUserAssignedRoles(data.user.roles || []);
 
       if (window.electronAPI && typeof window.electronAPI.saveSession === 'function') {
         await window.electronAPI.saveSession(data.token);
@@ -415,7 +453,7 @@ export default function App() {
       await fetchAllPermissions(data.token);
       await fetchOrgPolicy(data.token);
       await fetchAuditLogs(data.token);
-      setSuccessMsg('Account registered and cryptographic identity keys generated!');
+      setSuccessMsg('Account registered and cryptographic identity setup successfully!');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -444,6 +482,8 @@ export default function App() {
       setToken(data.token);
       setCurrentUser(data.user);
       setCurrentOrg(data.organization);
+      setUserPermissions(data.user.permissions || []);
+      setUserAssignedRoles(data.user.roles || []);
 
       if (window.electronAPI && typeof window.electronAPI.saveSession === 'function') {
         await window.electronAPI.saveSession(data.token);
@@ -499,7 +539,6 @@ export default function App() {
         body: JSON.stringify({
           email: newUserEmail,
           password: newUserPassword,
-          role: newUserRole,
         }),
       });
 
@@ -522,7 +561,6 @@ export default function App() {
     }
   };
 
-  // Cycle 10.1 Create Custom Organization Role
   const handleCreateCustomRole = async (e) => {
     e.preventDefault();
     if (!newRoleName) return;
@@ -548,7 +586,7 @@ export default function App() {
       setNewRoleName('');
       setNewRoleDesc('');
       setNewRolePerms([]);
-      setSuccessMsg(`Custom Role "${data.role.name}" created successfully.`);
+      setSuccessMsg(`Role "${data.role.name}" created successfully.`);
       await fetchOrgRoles(token);
       await fetchAuditLogs(token);
     } catch (err) {
@@ -558,7 +596,6 @@ export default function App() {
     }
   };
 
-  // Cycle 3 Local File Selection & Local AES-256-GCM Encryption
   const handleSelectFile = async () => {
     if (!window.electronAPI || typeof window.electronAPI.selectFile !== 'function') return;
     setError(null);
@@ -567,9 +604,6 @@ export default function App() {
       if (!res.canceled) {
         setSelectedFile(res);
         setEncryptResult(null);
-        setDecryptResult(null);
-        setIntegrityResult(null);
-        setUploadResult(null);
       }
     } catch (err) {
       setError(err.message);
@@ -584,7 +618,7 @@ export default function App() {
       const res = await window.electronAPI.encryptFile(selectedFile.filePath);
       if (res.success) {
         setEncryptResult(res);
-        setSuccessMsg('File encrypted locally with AES-256-GCM and stored in memory.');
+        setSuccessMsg('File encrypted locally with AES-256-GCM.');
       } else {
         setError(res.error);
       }
@@ -595,12 +629,10 @@ export default function App() {
     }
   };
 
-  // Phase 9D Cloud Ciphertext Upload with Sensitivity Level
   const handleCloudUpload = async (reauthPwd = null) => {
     if (!selectedFile || !encryptResult) return;
     setLoading(true);
     setError(null);
-    setUploadResult(null);
 
     try {
       const res = await window.electronAPI.uploadCiphertext({
@@ -611,10 +643,6 @@ export default function App() {
       });
 
       if (res.success) {
-        setUploadResult({
-          message: 'File ciphertext uploaded to cloud storage.',
-          file: res.file,
-        });
         setSuccessMsg(`File uploaded successfully! Sensitivity Level: ${uploadSensitivity}`);
         await fetchUserFiles(token);
         await fetchAuditLogs(token);
@@ -632,7 +660,6 @@ export default function App() {
     }
   };
 
-  // Download & Decrypt Owned File
   const handleDownloadFile = async (fileId, sensitivityLevel, reauthPwd = null) => {
     setDownloadStatus((prev) => ({ ...prev, [fileId]: { loading: true, error: null } }));
     setError(null);
@@ -665,13 +692,14 @@ export default function App() {
     }
   };
 
-  // Share File with Recipient (Cycle 6 + 7 + 9D)
   const handleShareFile = async (fileId, reauthPwd = null) => {
     const recipient = shareRecipients[fileId];
     if (!recipient || !recipient.id || !recipient.publicKey) {
       setError('Please select a recipient with a registered public key from the dropdown.');
       return;
     }
+
+    const accessLevel = shareAccessLevels[fileId] || 'READ';
 
     setShareStatus((prev) => ({ ...prev, [fileId]: { loading: true, error: null } }));
     setError(null);
@@ -681,6 +709,7 @@ export default function App() {
         fileId,
         recipientUserId: recipient.id,
         recipientPublicKey: recipient.publicKey,
+        accessLevel,
         token,
         reauthPassword: reauthPwd,
       });
@@ -690,7 +719,7 @@ export default function App() {
           ...prev,
           [fileId]: { loading: false, success: true, message: res.message },
         }));
-        setSuccessMsg(`File shared successfully with ${recipient.email}!`);
+        setSuccessMsg(`File shared successfully with ${recipient.email} (${accessLevel} access level)!`);
         await fetchFileShares(fileId, token);
         await fetchAuditLogs(token);
       } else {
@@ -707,7 +736,6 @@ export default function App() {
     }
   };
 
-  // Revoke Share (Cycle 7 + 9D)
   const handleRevokeShare = async (fileId, recipientUserId, reauthPwd = null) => {
     setError(null);
     try {
@@ -734,7 +762,6 @@ export default function App() {
     }
   };
 
-  // Download & Decrypt Shared File (Bob)
   const handleDownloadSharedFile = async (fileId, sensitivityLevel, reauthPwd = null) => {
     setSharedDownloadStatus((prev) => ({ ...prev, [fileId]: { loading: true, error: null } }));
     setError(null);
@@ -776,7 +803,6 @@ export default function App() {
     );
   }
 
-  // --- UNAUTHENTICATED LOGIN / REGISTER VIEW ---
   if (!token) {
     return (
       <div style={{ maxWidth: '420px', margin: '60px auto', padding: '30px', backgroundColor: '#1e293b', borderRadius: '12px', color: '#f8fafc', fontFamily: 'sans-serif', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
@@ -809,11 +835,11 @@ export default function App() {
               <input type="text" value={regOrgName} onChange={(e) => setRegOrgName(e.target.value)} required style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #334155', backgroundColor: '#0f172a', color: '#fff', boxSizing: 'border-box' }} />
             </div>
             <div style={{ marginBottom: '14px' }}>
-              <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#cbd5e1' }}>Admin Email Address</label>
+              <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#cbd5e1' }}>Owner Email Address</label>
               <input type="email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} required style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #334155', backgroundColor: '#0f172a', color: '#fff', boxSizing: 'border-box' }} />
             </div>
             <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#cbd5e1' }}>Admin Password</label>
+              <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#cbd5e1' }}>Owner Password</label>
               <input type="password" value={regPassword} onChange={(e) => setRegPassword(e.target.value)} required style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #334155', backgroundColor: '#0f172a', color: '#fff', boxSizing: 'border-box' }} />
             </div>
             <button type="submit" disabled={loading} style={{ width: '100%', padding: '12px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>{loading ? 'Creating Organization...' : 'Register & Setup Identity'}</button>
@@ -823,7 +849,6 @@ export default function App() {
     );
   }
 
-  // --- AUTHENTICATED DASHBOARD VIEW ---
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#f8fafc', fontFamily: 'sans-serif', padding: '24px' }}>
       
@@ -875,7 +900,7 @@ export default function App() {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9990 }}>
           <div style={{ backgroundColor: '#1e293b', border: '1px solid #38bdf8', borderRadius: '12px', padding: '28px', maxWidth: '640px', width: '100%', color: '#fff', maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '12px', marginBottom: '18px' }}>
-              <h3 style={{ margin: 0, color: '#38bdf8' }}>🛡️ Zero Trust Security Context (Cycles 10.1-10.6)</h3>
+              <h3 style={{ margin: 0, color: '#38bdf8' }}>🛡️ Zero Trust Security Context</h3>
               <button onClick={() => setShowSecurityPanel(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}>✕</button>
             </div>
             
@@ -901,10 +926,10 @@ export default function App() {
                 </div>
               </div>
 
-              {/* CYCLE 10.6 TAMPER-EVIDENT AUDIT CHAIN STATUS */}
+              {/* AUDIT CHAIN STATUS */}
               <div style={{ padding: '12px', backgroundColor: '#0f172a', borderRadius: '8px', marginBottom: '14px', border: '1px solid #334155' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <h4 style={{ margin: 0, color: '#38bdf8', fontSize: '13px' }}>📜 Tamper-Evident SHA-256 Audit Chain (Cycle 10.6)</h4>
+                  <h4 style={{ margin: 0, color: '#38bdf8', fontSize: '13px' }}>📜 SHA-256 Audit Chain Verification</h4>
                   <button onClick={handleVerifyAuditChain} style={{ padding: '4px 10px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>Verify Chain Integrity</button>
                 </div>
                 {auditVerification && (
@@ -912,27 +937,25 @@ export default function App() {
                     {auditVerification.valid ? `✓ Chain Intact (${auditVerification.totalLogs} logs verified)` : `⚠️ ${auditVerification.error}`}
                   </div>
                 )}
-                <div style={{ fontSize: '11px', color: '#cbd5e1', marginTop: '4px' }}>
-                  Total Security Audit Events Recorded: <strong>{auditLogs.length}</strong>
-                </div>
               </div>
 
-              {/* CYCLE 10.2 ORG POLICY & CYCLE 10.3 GEO-CONTEXT */}
+              {/* MULTI-GEO POLICIES */}
               <div style={{ padding: '12px', backgroundColor: '#0f172a', borderRadius: '8px', marginBottom: '14px', border: '1px solid #334155' }}>
-                <h4 style={{ margin: '0 0 8px 0', color: '#38bdf8', fontSize: '13px' }}>🌍 Organization Security & Geo-Policy (Cycle 10.2/10.3)</h4>
+                <h4 style={{ margin: '0 0 8px 0', color: '#38bdf8', fontSize: '13px' }}>🌍 Multi-Location Geo Policies</h4>
                 {orgPolicy ? (
                   <div>
-                    <div>Allowed Scope: <strong>Country:</strong> <code>{orgPolicy.allowed_country}</code> | <strong>State:</strong> <code>{orgPolicy.allowed_state}</code> | <strong>City:</strong> <code>{orgPolicy.allowed_city}</code></div>
                     <div>Geo-Fencing Mode: <strong>{orgPolicy.enforce_geo_fencing ? '🔴 Strict Enforce / Block' : '🟡 Flexible / Step-Up Re-Auth'}</strong></div>
+                    <div style={{ marginTop: '6px', fontSize: '11px' }}>Allowed Locations:</div>
+                    {(orgPolicy.allowedLocations || []).map(loc => (
+                      <div key={loc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', padding: '2px 0' }}>
+                        <code>{loc.allowed_city}, {loc.allowed_state}, {loc.allowed_country}</code>
+                        {userPermissions.includes('ORG_MANAGE') && (
+                          <button onClick={() => handleRemoveGeoLocation(loc.id)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer' }}>Remove</button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ) : <div>Loading organization policy...</div>}
-              </div>
-
-              <div style={{ marginBottom: '10px' }}><strong>Device Context (Safe ID):</strong> <code>{window.electronAPI?.platform ? `electron-profile-${currentUser?.email.split('@')[0]}` : 'electron-default-device'}</code></div>
-              <div style={{ marginBottom: '10px' }}><strong>Current Location Context:</strong> <code>Mumbai, Maharashtra, IN (127.0.0.1)</code></div>
-              
-              <div style={{ padding: '10px', backgroundColor: '#0f172a', borderRadius: '6px', fontSize: '11px', color: '#94a3b8', border: '1px dashed #334155' }}>
-                🔒 <strong>Zero Trust Invariant Verified:</strong> Admin management privileges DO NOT grant file decryption rights. File access requires explicit resource ownership or file_keys record.
+                ) : <div>Loading policies...</div>}
               </div>
             </div>
           </div>
@@ -944,7 +967,7 @@ export default function App() {
         <div>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#38bdf8' }}>🔒 SecureVault</h2>
           <div style={{ fontSize: '12px', color: '#cbd5e1', marginTop: '4px' }}>
-            Org: <strong>{currentOrg?.name}</strong> | User: <strong>{currentUser?.email}</strong> | Roles: {userAssignedRoles.map(r => r.name).join(', ') || currentUser?.role}
+            Org: <strong>{currentOrg?.name}</strong> | User: <strong>{currentUser?.email}</strong> | Roles: {userAssignedRoles.map(r => r.name).join(', ') || 'No Assigned Role'}
           </div>
         </div>
 
@@ -970,13 +993,10 @@ export default function App() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
         
-        {/* LEFT COLUMN: FILE ENCRYPTION & CLOUD UPLOAD */}
+        {/* LEFT COLUMN */}
         <div>
-          {/* LOCAL ENCRYPTION CARD */}
           <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '10px', marginBottom: '24px', border: '1px solid #334155' }}>
             <h3 style={{ marginTop: 0, fontSize: '16px', color: '#f8fafc' }}>1. Local File Encryption (AES-256-GCM)</h3>
-            <p style={{ fontSize: '12px', color: '#94a3b8' }}>Select a local file to generate a 32-byte DEK and encrypt buffer locally.</p>
-
             <button onClick={handleSelectFile} style={{ padding: '10px 16px', backgroundColor: '#334155', color: '#fff', border: '1px solid #475569', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', marginBottom: '12px' }}>
               📁 Select Local File
             </button>
@@ -996,187 +1016,117 @@ export default function App() {
             {encryptResult && (
               <div style={{ marginTop: '12px', fontSize: '12px', backgroundColor: '#0f172a', padding: '12px', borderRadius: '6px', border: '1px solid #0284c7' }}>
                 <div style={{ color: '#38bdf8', fontWeight: 'bold', marginBottom: '4px' }}>✓ File Encrypted Locally!</div>
-                <div>Algorithm: <code>{encryptResult.algorithm}</code></div>
-                <div>Encrypted Size: {encryptResult.encryptedSize} bytes</div>
               </div>
             )}
           </div>
 
-          {/* CLOUD UPLOAD & CLASSIFICATION CARD */}
           {encryptResult && (
             <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '10px', marginBottom: '24px', border: '1px solid #334155' }}>
-              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#f8fafc' }}>2. Cloud Ciphertext Upload & Sensitivity Classification</h3>
-              
+              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#f8fafc' }}>2. Cloud Upload & Sensitivity Classification</h3>
               <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px' }}>Select File Sensitivity Level (Phase 9D):</label>
-                <select
-                  value={uploadSensitivity}
-                  onChange={(e) => setUploadSensitivity(e.target.value)}
-                  style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#0f172a', color: '#fff', border: '1px solid #475569' }}
-                >
-                  <option value="NORMAL">🟢 NORMAL (Standard E2EE Security)</option>
-                  <option value="SENSITIVE">🟡 SENSITIVE (Step-Up Re-auth on Share/Revoke)</option>
-                  <option value="HIGHLY_SENSITIVE">🔴 HIGHLY_SENSITIVE (Step-Up Re-auth on Download & Share)</option>
+                <select value={uploadSensitivity} onChange={(e) => setUploadSensitivity(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#0f172a', color: '#fff', border: '1px solid #475569' }}>
+                  <option value="NORMAL">🟢 NORMAL (Standard Security)</option>
+                  <option value="SENSITIVE">🟡 SENSITIVE (Step-Up on Share/Revoke)</option>
+                  <option value="HIGHLY_SENSITIVE">🔴 HIGHLY_SENSITIVE (Step-Up on Download & Share)</option>
                 </select>
               </div>
-
               <button onClick={() => handleCloudUpload()} disabled={loading} style={{ padding: '10px 18px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}>
-                {loading ? 'Uploading to B2...' : '☁️ Upload Ciphertext & Self-Wrap DEK'}
+                {loading ? 'Uploading...' : '☁️ Upload Ciphertext'}
               </button>
             </div>
           )}
 
-          {/* ADMIN & AUDIT MANAGEMENT PANEL (Cycle 10.1 & 10.6) */}
+          {/* ADMIN MANAGEMENT */}
           {(userPermissions.includes('USER_MANAGE') || userPermissions.includes('ROLE_MANAGE') || userPermissions.includes('ORG_MANAGE')) && (
             <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '10px', border: '1px solid #334155' }}>
-              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#38bdf8' }}>⚙️ Security Policy & Audit Management</h3>
+              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#38bdf8' }}>⚙️ Security Policy & User Management</h3>
 
-              {/* Cycle 10.6 Audit Event Stream */}
-              <div style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '8px', marginBottom: '16px', border: '1px solid #334155' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <h4 style={{ margin: 0, fontSize: '13px', color: '#38bdf8' }}>📜 Security Audit Logs (Cycle 10.6 Hash Chain)</h4>
-                  <button onClick={() => fetchAuditLogs(token)} style={{ padding: '4px 8px', backgroundColor: '#334155', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '10px', cursor: 'pointer' }}>Refresh</button>
-                </div>
-                <div style={{ maxHeight: '160px', overflowY: 'auto', fontSize: '11px' }}>
-                  {auditLogs.slice(0, 10).map(log => (
-                    <div key={log.id} style={{ padding: '4px 0', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between' }}>
-                      <span><strong>{log.event_type}</strong> ({log.user_email})</span>
-                      <span style={{ color: log.action === 'ALLOW' ? '#4ade80' : '#fca5a5' }}>{log.action}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* Add Geo Location Policy */}
+              {userPermissions.includes('ORG_MANAGE') && (
+                <form onSubmit={handleAddGeoLocation} style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '8px', marginBottom: '16px', border: '1px solid #334155' }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#38bdf8' }}>Add Allowed Geographic Scope</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 80px', gap: '6px' }}>
+                    <input type="text" placeholder="Country (IN)" value={newGeoCountry} onChange={(e) => setNewGeoCountry(e.target.value)} required style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', fontSize: '11px' }} />
+                    <input type="text" placeholder="State (ALL)" value={newGeoState} onChange={(e) => setNewGeoState(e.target.value)} required style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', fontSize: '11px' }} />
+                    <input type="text" placeholder="City (ALL)" value={newGeoCity} onChange={(e) => setNewGeoCity(e.target.value)} required style={{ padding: '6px', borderRadius: '4px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', fontSize: '11px' }} />
+                    <button type="submit" style={{ padding: '6px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>Add</button>
+                  </div>
+                </form>
+              )}
 
               {/* Add User Form */}
-              <form onSubmit={handleCreateUser} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px', gap: '8px', marginBottom: '16px' }}>
-                <input type="email" placeholder="New User Email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #334155', backgroundColor: '#0f172a', color: '#fff', fontSize: '12px' }} />
+              <form onSubmit={handleCreateUser} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px', gap: '8px', marginBottom: '16px' }}>
+                <input type="email" placeholder="User Email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #334155', backgroundColor: '#0f172a', color: '#fff', fontSize: '12px' }} />
                 <input type="password" placeholder="Password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} required style={{ padding: '8px', borderRadius: '6px', border: '1px solid #334155', backgroundColor: '#0f172a', color: '#fff', fontSize: '12px' }} />
-                <select value={newUserRole} onChange={(e) => setNewUserRole(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #334155', backgroundColor: '#0f172a', color: '#fff', fontSize: '12px' }}>
-                  <option value="USER">USER</option>
-                  <option value="ADMIN">ADMIN</option>
-                </select>
                 <button type="submit" disabled={loading} style={{ padding: '8px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>Add User</button>
               </form>
             </div>
           )}
         </div>
 
-        {/* RIGHT COLUMN: OWNED FILES & SHARED FILES */}
+        {/* RIGHT COLUMN */}
         <div>
-          {/* OWNED FILES & E2EE SHARING */}
           <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '10px', marginBottom: '24px', border: '1px solid #334155' }}>
             <h3 style={{ marginTop: 0, fontSize: '16px', color: '#f8fafc' }}>📂 My Uploaded Files</h3>
 
             {fileList.length === 0 ? (
               <p style={{ fontSize: '12px', color: '#94a3b8' }}>No uploaded files found.</p>
             ) : (
-              fileList.map((f) => {
-                const sensitivity = f.sensitivityLevel || 'NORMAL';
-                const badgeColor = sensitivity === 'HIGHLY_SENSITIVE' ? '#ef4444' : (sensitivity === 'SENSITIVE' ? '#eab308' : '#22c55e');
-
-                return (
-                  <div key={f.id} style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '8px', marginBottom: '12px', border: '1px solid #334155' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <strong style={{ fontSize: '14px', color: '#f8fafc' }}>{f.originalName}</strong>
-                      <span style={{ fontSize: '10px', padding: '3px 8px', borderRadius: '4px', backgroundColor: badgeColor, color: '#0f172a', fontWeight: 'bold' }}>
-                        {sensitivity}
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '10px' }}>
-                      Size: {f.originalSize} bytes | ID: {f.id.substring(0, 8)}...
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
-                      <button
-                        onClick={() => handleDownloadFile(f.id, sensitivity)}
-                        style={{ padding: '6px 12px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}
-                      >
-                        ⬇️ Download & Decrypt
-                      </button>
-                    </div>
-
-                    {/* RECIPIENT SHARING CONTROL */}
-                    <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                      <select
-                        onChange={(e) => {
-                          const targetUser = orgUsers.find(u => u.id === e.target.value);
-                          if (targetUser) setShareRecipients(prev => ({ ...prev, [f.id]: targetUser }));
-                        }}
-                        style={{ flex: 1, padding: '6px', borderRadius: '4px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', fontSize: '11px' }}
-                      >
-                        <option value="">Select Org Recipient...</option>
-                        {orgUsers.filter(u => u.id !== currentUser.id).map(u => (
-                          <option key={u.id} value={u.id}>{u.email}</option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={() => handleShareFile(f.id)}
-                        style={{ padding: '6px 12px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
-                      >
-                        🤝 Share DEK
-                      </button>
-                    </div>
-
-                    {/* ACTIVE SHARES LIST */}
-                    {fileShares[f.id] && fileShares[f.id].length > 0 && (
-                      <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #334155', fontSize: '11px' }}>
-                        <span style={{ color: '#cbd5e1' }}>Currently Shared With:</span>
-                        {fileShares[f.id].map(share => (
-                          <div key={share.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                            <span>• {share.email}</span>
-                            <button
-                              onClick={() => handleRevokeShare(f.id, share.userId)}
-                              style={{ padding: '2px 8px', backgroundColor: '#991b1b', color: '#fff', border: 'none', borderRadius: '3px', fontSize: '10px', cursor: 'pointer' }}
-                            >
-                              Revoke
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+              fileList.map((f) => (
+                <div key={f.id} style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '8px', marginBottom: '12px', border: '1px solid #334155' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <strong style={{ fontSize: '14px', color: '#f8fafc' }}>{f.originalName}</strong>
+                    <span style={{ fontSize: '10px', padding: '3px 8px', borderRadius: '4px', backgroundColor: '#22c55e', color: '#0f172a', fontWeight: 'bold' }}>{f.sensitivityLevel}</span>
                   </div>
-                );
-              })
+
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                    <button onClick={() => handleDownloadFile(f.id, f.sensitivityLevel)} style={{ padding: '6px 12px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}>⬇️ Download</button>
+                  </div>
+
+                  {/* RECIPIENT SHARING CONTROL WITH RESOURCE-LEVEL ACCESS RESTRICTION */}
+                  <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                    <select
+                      onChange={(e) => {
+                        const targetUser = orgUsers.find(u => u.id === e.target.value);
+                        if (targetUser) setShareRecipients(prev => ({ ...prev, [f.id]: targetUser }));
+                      }}
+                      style={{ flex: 1, padding: '6px', borderRadius: '4px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', fontSize: '11px' }}
+                    >
+                      <option value="">Select Recipient...</option>
+                      {orgUsers.filter(u => u.id !== currentUser.id).map(u => (
+                        <option key={u.id} value={u.id}>{u.email}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={shareAccessLevels[f.id] || 'READ'}
+                      onChange={(e) => setShareAccessLevels(prev => ({ ...prev, [f.id]: e.target.value }))}
+                      style={{ width: '100px', padding: '6px', borderRadius: '4px', backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', fontSize: '11px' }}
+                    >
+                      <option value="READ">READ ONLY</option>
+                      <option value="FULL">FULL ACCESS</option>
+                    </select>
+
+                    <button onClick={() => handleShareFile(f.id)} style={{ padding: '6px 12px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>🤝 Share</button>
+                  </div>
+                </div>
+              ))
             )}
           </div>
 
-          {/* FILES SHARED WITH ME */}
           <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '10px', border: '1px solid #334155' }}>
             <h3 style={{ marginTop: 0, fontSize: '16px', color: '#38bdf8' }}>📥 Files Shared With Me</h3>
-
-            {sharedFileList.length === 0 ? (
-              <p style={{ fontSize: '12px', color: '#94a3b8' }}>No shared files available.</p>
-            ) : (
-              sharedFileList.map((sf) => {
-                const sensitivity = sf.sensitivityLevel || 'NORMAL';
-                const badgeColor = sensitivity === 'HIGHLY_SENSITIVE' ? '#ef4444' : (sensitivity === 'SENSITIVE' ? '#eab308' : '#22c55e');
-
-                return (
-                  <div key={sf.id} style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '8px', marginBottom: '12px', border: '1px solid #334155' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <strong style={{ fontSize: '14px', color: '#f8fafc' }}>{sf.originalName}</strong>
-                      <span style={{ fontSize: '10px', padding: '3px 8px', borderRadius: '4px', backgroundColor: badgeColor, color: '#0f172a', fontWeight: 'bold' }}>
-                        {sensitivity}
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '10px' }}>
-                      Owner: <strong>{sf.ownerEmail}</strong> | Size: {sf.originalSize} bytes
-                    </div>
-
-                    <button
-                      onClick={() => handleDownloadSharedFile(sf.id, sensitivity)}
-                      style={{ padding: '6px 14px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
-                    >
-                      🔓 Download & Decrypt Shared File
-                    </button>
-                  </div>
-                );
-              })
-            )}
+            {sharedFileList.map((sf) => (
+              <div key={sf.id} style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '8px', marginBottom: '12px', border: '1px solid #334155' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <strong style={{ fontSize: '14px', color: '#f8fafc' }}>{sf.originalName}</strong>
+                  <span style={{ fontSize: '10px', padding: '2px 6px', backgroundColor: sf.accessLevel === 'FULL' ? '#16a34a' : '#0284c7', borderRadius: '4px' }}>{sf.accessLevel}</span>
+                </div>
+                <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '10px' }}>Owner: {sf.ownerEmail}</div>
+                <button onClick={() => handleDownloadSharedFile(sf.id, sf.sensitivityLevel)} style={{ padding: '6px 14px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}>🔓 Download & Decrypt</button>
+              </div>
+            ))}
           </div>
-
         </div>
 
       </div>

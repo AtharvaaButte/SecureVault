@@ -1,55 +1,74 @@
 const { pool } = require('../db');
 
 /**
- * Organization Security Policy Service (Cycle 10.2)
+ * Simplified Organization Security Policy & Multi-Geo Policy Service
  */
 
 async function getOrganizationPolicy(orgId) {
-  const result = await pool.query(
+  let policyRes = await pool.query(
     'SELECT * FROM organization_policies WHERE organization_id = $1',
     [orgId]
   );
 
-  if (result.rows.length > 0) {
-    return result.rows[0];
+  let policy;
+  if (policyRes.rows.length === 0) {
+    const defaultPolicyRes = await pool.query(
+      `INSERT INTO organization_policies 
+        (organization_id, require_stepup_new_location, require_stepup_sensitive_file, enforce_geo_fencing)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (organization_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [orgId, true, true, false]
+    );
+    policy = defaultPolicyRes.rows[0];
+  } else {
+    policy = policyRes.rows[0];
   }
 
-  // Seed default policy if missing
-  const defaultPolicyRes = await pool.query(
-    `INSERT INTO organization_policies 
-      (organization_id, allowed_country, allowed_state, allowed_city, require_stepup_new_location, require_stepup_sensitive_file, enforce_geo_fencing)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (organization_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-     RETURNING *`,
-    [orgId, 'IN', 'ALL', 'ALL', true, true, false]
+  // Fetch allowed geographic scope policies
+  let geoRes = await pool.query(
+    'SELECT id, allowed_country, allowed_state, allowed_city, created_at FROM organization_geo_policies WHERE organization_id = $1 ORDER BY created_at ASC',
+    [orgId]
   );
 
-  return defaultPolicyRes.rows[0];
+  let allowedLocations = geoRes.rows;
+  if (allowedLocations.length === 0) {
+    const defaultGeoRes = await pool.query(
+      `INSERT INTO organization_geo_policies 
+        (organization_id, allowed_country, allowed_state, allowed_city)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT DO NOTHING
+       RETURNING id, allowed_country, allowed_state, allowed_city, created_at`,
+      [orgId, 'IN', 'ALL', 'ALL']
+    );
+    if (defaultGeoRes.rows.length > 0) {
+      allowedLocations = defaultGeoRes.rows;
+    } else {
+      const fetchRefreshed = await pool.query(
+        'SELECT id, allowed_country, allowed_state, allowed_city, created_at FROM organization_geo_policies WHERE organization_id = $1',
+        [orgId]
+      );
+      allowedLocations = fetchRefreshed.rows;
+    }
+  }
+
+  return {
+    ...policy,
+    allowedLocations,
+  };
 }
 
 async function updateOrganizationPolicy(orgId, policyData) {
   const {
-    allowedCountry,
-    allowedState,
-    allowedCity,
     requireStepupNewLocation,
     requireStepupSensitiveFile,
     enforceGeoFencing,
+    allowedCountry,
+    allowedState,
+    allowedCity,
   } = policyData || {};
 
   const current = await getOrganizationPolicy(orgId);
-
-  const newCountry = (allowedCountry !== undefined && typeof allowedCountry === 'string' && allowedCountry.trim().length > 0)
-    ? allowedCountry.trim().toUpperCase()
-    : current.allowed_country;
-
-  const newState = (allowedState !== undefined && typeof allowedState === 'string' && allowedState.trim().length > 0)
-    ? allowedState.trim()
-    : current.allowed_state;
-
-  const newCity = (allowedCity !== undefined && typeof allowedCity === 'string' && allowedCity.trim().length > 0)
-    ? allowedCity.trim()
-    : current.allowed_city;
 
   const newStepupNewLoc = requireStepupNewLocation !== undefined ? Boolean(requireStepupNewLocation) : Boolean(current.require_stepup_new_location);
   const newStepupSensFile = requireStepupSensitiveFile !== undefined ? Boolean(requireStepupSensitiveFile) : Boolean(current.require_stepup_sensitive_file);
@@ -57,42 +76,93 @@ async function updateOrganizationPolicy(orgId, policyData) {
 
   const updateRes = await pool.query(
     `UPDATE organization_policies
-     SET allowed_country = $1,
-         allowed_state = $2,
-         allowed_city = $3,
-         require_stepup_new_location = $4,
-         require_stepup_sensitive_file = $5,
-         enforce_geo_fencing = $6,
+     SET require_stepup_new_location = $1,
+         require_stepup_sensitive_file = $2,
+         enforce_geo_fencing = $3,
          updated_at = CURRENT_TIMESTAMP
-     WHERE organization_id = $7
+     WHERE organization_id = $4
      RETURNING *`,
-    [newCountry, newState, newCity, newStepupNewLoc, newStepupSensFile, newEnforceGeoFence, orgId]
+    [newStepupNewLoc, newStepupSensFile, newEnforceGeoFence, orgId]
   );
 
-  return updateRes.rows[0];
+  const updatedPolicy = updateRes.rows[0];
+
+  if (allowedCountry !== undefined || allowedState !== undefined || allowedCity !== undefined) {
+    const firstLoc = current.allowedLocations[0] || { allowed_country: 'IN', allowed_state: 'ALL', allowed_city: 'ALL' };
+    const country = (allowedCountry && allowedCountry.trim()) ? allowedCountry.trim().toUpperCase() : firstLoc.allowed_country;
+    const state = (allowedState && allowedState.trim()) ? allowedState.trim() : firstLoc.allowed_state;
+    const city = (allowedCity && allowedCity.trim()) ? allowedCity.trim() : firstLoc.allowed_city;
+
+    await pool.query('DELETE FROM organization_geo_policies WHERE organization_id = $1', [orgId]);
+    await pool.query(
+      `INSERT INTO organization_geo_policies (organization_id, allowed_country, allowed_state, allowed_city)
+       VALUES ($1, $2, $3, $4)`,
+      [orgId, country, state, city]
+    );
+  }
+
+  const geoRes = await pool.query(
+    'SELECT id, allowed_country, allowed_state, allowed_city, created_at FROM organization_geo_policies WHERE organization_id = $1 ORDER BY created_at ASC',
+    [orgId]
+  );
+
+  return {
+    ...updatedPolicy,
+    allowedLocations: geoRes.rows,
+  };
 }
 
-function evaluateGeoPolicy(policy, location) {
-  if (!policy || !location) {
+async function addGeoPolicyLocation(orgId, { allowedCountry, allowedState, allowedCity }) {
+  const country = allowedCountry ? allowedCountry.trim().toUpperCase() : 'IN';
+  const state = allowedState ? allowedState.trim() : 'ALL';
+  const city = allowedCity ? allowedCity.trim() : 'ALL';
+
+  const res = await pool.query(
+    `INSERT INTO organization_geo_policies (organization_id, allowed_country, allowed_state, allowed_city)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (organization_id, allowed_country, allowed_state, allowed_city) DO UPDATE SET created_at = CURRENT_TIMESTAMP
+     RETURNING id, allowed_country, allowed_state, allowed_city, created_at`,
+    [orgId, country, state, city]
+  );
+  return res.rows[0];
+}
+
+async function removeGeoPolicyLocation(orgId, geoPolicyId) {
+  await pool.query(
+    'DELETE FROM organization_geo_policies WHERE id = $1 AND organization_id = $2',
+    [geoPolicyId, orgId]
+  );
+}
+
+function evaluateGeoPolicy(policyWithGeo, location) {
+  if (!policyWithGeo || !location) {
     return { isViolation: false, allowed: true };
   }
 
-  const countryMatch = policy.allowed_country === 'ALL' || location.country === policy.allowed_country;
-  const stateMatch = policy.allowed_state === 'ALL' || location.state === policy.allowed_state;
-  const cityMatch = policy.allowed_city === 'ALL' || location.city === policy.allowed_city;
+  const allowedLocations = policyWithGeo.allowedLocations || [];
+  if (allowedLocations.length === 0) {
+    return { isViolation: false, allowed: true };
+  }
 
-  if (!countryMatch || !stateMatch || !cityMatch) {
-    let violationScope = '';
-    if (!countryMatch) violationScope = `Country (${location.country} != ${policy.allowed_country})`;
-    else if (!stateMatch) violationScope = `State (${location.state} != ${policy.allowed_state})`;
-    else if (!cityMatch) violationScope = `City (${location.city} != ${policy.allowed_city})`;
+  let matched = false;
 
+  for (const rule of allowedLocations) {
+    const countryMatch = rule.allowed_country === 'ALL' || location.country === rule.allowed_country;
+    const stateMatch = rule.allowed_state === 'ALL' || location.state === rule.allowed_state;
+    const cityMatch = rule.allowed_city === 'ALL' || location.city === rule.allowed_city;
+
+    if (countryMatch && stateMatch && cityMatch) {
+      matched = true;
+      break;
+    }
+  }
+
+  if (!matched) {
     return {
       isViolation: true,
       allowed: false,
-      enforceGeoFencing: Boolean(policy.enforce_geo_fencing),
-      violationScope,
-      reason: `Access location "${location.city}, ${location.state}, ${location.country}" violates organization geographic scope policy [Scope: ${policy.allowed_city}, ${policy.allowed_state}, ${policy.allowed_country}].`,
+      enforceGeoFencing: Boolean(policyWithGeo.enforce_geo_fencing),
+      reason: `Access location "${location.city}, ${location.state}, ${location.country}" does not match any allowed organization geographic policies.`,
     };
   }
 
@@ -102,5 +172,7 @@ function evaluateGeoPolicy(policy, location) {
 module.exports = {
   getOrganizationPolicy,
   updateOrganizationPolicy,
+  addGeoPolicyLocation,
+  removeGeoPolicyLocation,
   evaluateGeoPolicy,
 };

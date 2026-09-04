@@ -3,7 +3,7 @@ const rbacService = require('../services/rbacService');
 const riskService = require('../services/riskService');
 
 /**
- * Middleware: Require a specific dynamic RBAC permission + Phase 9C/9D Risk Evaluation.
+ * Middleware: Require a specific dynamic RBAC permission + Risk Evaluation.
  */
 function requirePermission(permissionName) {
   return async (req, res, next) => {
@@ -18,7 +18,7 @@ function requirePermission(permissionName) {
         return res.status(403).json({ message: `Access denied. Required permission: ${permissionName}` });
       }
 
-      // 2. Phase 9C/9D Risk & Sensitivity Evaluation
+      // 2. Risk & Sensitivity Evaluation
       const riskResult = await riskService.evaluateRisk(req.user.userId, req, permissionName, 'NORMAL');
       if (!riskResult.allow) {
         return res.status(403).json({
@@ -36,7 +36,8 @@ function requirePermission(permissionName) {
 }
 
 /**
- * Middleware: Require file access authorization for READ, SHARE, REVOKE, or DELETE + Phase 9C/9D Sensitivity & Risk Evaluation.
+ * Middleware: Require file access authorization for READ, SHARE, REVOKE, or DELETE.
+ * Enforces BOTH Global Role Permissions AND Resource-Level File Access Restrictions (file_keys.access_level).
  */
 function requireFileAccess(accessType) {
   const permMap = {
@@ -59,13 +60,13 @@ function requireFileAccess(accessType) {
         return res.status(400).json({ message: 'File ID parameter is required.' });
       }
 
-      // 1. Dynamic RBAC Permission Check (Phase 9B)
+      // 1. Global Dynamic RBAC Permission Check
       const hasPerm = await rbacService.hasPermission(req.user.userId, requiredPerm);
       if (!hasPerm) {
         return res.status(403).json({ message: `Access denied. Required permission: ${requiredPerm}` });
       }
 
-      // 2. Fetch file details from PostgreSQL (including sensitivity_level)
+      // 2. Fetch file details from PostgreSQL
       const result = await pool.query(
         `SELECT f.id, f.owner_id, f.sensitivity_level, u.organization_id 
          FROM files f 
@@ -80,31 +81,35 @@ function requireFileAccess(accessType) {
 
       const fileRecord = result.rows[0];
 
-      // 3. Organization Isolation Check (Phase 9B)
+      // 3. Organization Isolation Check
       if (fileRecord.organization_id !== req.user.orgId) {
         return res.status(403).json({ message: 'Access denied. Cross-organization access is strictly prohibited.' });
       }
 
       const isOwner = fileRecord.owner_id === req.user.userId;
 
-      // 4. Resource Access Control Check (Phase 9B - MUST RUN BEFORE STEP-UP RE-AUTHENTICATION)
-      if (accessType === 'READ') {
-        if (!isOwner) {
-          const keyCheck = await pool.query(
-            'SELECT id FROM file_keys WHERE file_id = $1 AND user_id = $2',
-            [fileId, req.user.userId]
-          );
-          if (keyCheck.rows.length === 0) {
-            return res.status(403).json({ message: 'Access denied. You do not have permission to access this file.' });
-          }
+      // 4. Resource-Level File Access & Restriction Check (file_keys.access_level)
+      if (!isOwner) {
+        const keyCheck = await pool.query(
+          'SELECT id, access_level FROM file_keys WHERE file_id = $1 AND user_id = $2',
+          [fileId, req.user.userId]
+        );
+
+        if (keyCheck.rows.length === 0) {
+          return res.status(403).json({ message: 'Access denied. You do not have permission to access this file.' });
         }
-      } else if (accessType === 'SHARE' || accessType === 'REVOKE' || accessType === 'DELETE') {
-        if (!isOwner) {
-          return res.status(403).json({ message: 'Access denied. Only the file owner can perform this operation.' });
+
+        const resourceAccessLevel = keyCheck.rows[0].access_level || 'READ';
+
+        // If high-impact operation (SHARE, REVOKE, DELETE) is requested on a shared file restricted to READ
+        if ((accessType === 'SHARE' || accessType === 'REVOKE' || accessType === 'DELETE') && resourceAccessLevel !== 'FULL') {
+          return res.status(403).json({
+            message: `Access denied. This file was shared with you as READ ONLY. You cannot perform ${accessType} on this resource.`,
+          });
         }
       }
 
-      // 5. Phase 9C/9D File Sensitivity Policy & Risk Evaluation
+      // 5. File Sensitivity Policy & Context Risk Evaluation
       const riskResult = await riskService.evaluateRisk(
         req.user.userId,
         req,

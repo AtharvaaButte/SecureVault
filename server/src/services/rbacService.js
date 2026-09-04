@@ -1,64 +1,45 @@
 const { pool } = require('../db');
 
 /**
- * Seed default Admin & Member roles for an organization and assign standard permissions.
+ * Finalized RBAC Service
+ * Legacy users.role removed. Roles come strictly from user_roles -> roles -> role_permissions -> permissions.
+ * No mandatory system default roles; organizations create and manage their own roles.
  */
-async function seedOrganizationRoles(clientOrPool, orgId) {
+
+async function createInitialOrgRole(clientOrPool, orgId, roleName = 'Owner', description = 'Organization Owner with full permissions') {
   const executor = clientOrPool || pool;
 
-  // 1. Get all permission IDs
   const permRes = await executor.query('SELECT id, name FROM permissions');
   const permMap = {};
   permRes.rows.forEach(p => {
     permMap[p.name] = p.id;
   });
 
-  // 2. Create Admin Role for org
-  const adminRoleRes = await executor.query(
+  const roleRes = await executor.query(
     `INSERT INTO roles (organization_id, name, description)
      VALUES ($1, $2, $3)
      ON CONFLICT (organization_id, name) DO UPDATE SET description = EXCLUDED.description
      RETURNING id`,
-    [orgId, 'Admin', 'Organization Administrator with full administrative and file management permissions']
+    [orgId, roleName, description]
   );
-  const adminRoleId = adminRoleRes.rows[0].id;
+  const roleId = roleRes.rows[0].id;
 
-  // 3. Create Member Role for org
-  const memberRoleRes = await executor.query(
-    `INSERT INTO roles (organization_id, name, description)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (organization_id, name) DO UPDATE SET description = EXCLUDED.description
-     RETURNING id`,
-    [orgId, 'Member', 'Standard Organization Member with file management permissions']
-  );
-  const memberRoleId = memberRoleRes.rows[0].id;
-
-  // 4. Map Admin Permissions: All File & Admin permissions
-  const adminPermNames = [
+  // Map all standard system permissions to initial role
+  const allPermNames = [
     'USER_CREATE', 'USER_MANAGE', 'ROLE_MANAGE', 'ORG_MANAGE',
     'FILE_READ', 'FILE_UPLOAD', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'
   ];
-  for (const name of adminPermNames) {
+
+  for (const name of allPermNames) {
     if (permMap[name]) {
       await executor.query(
         `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [adminRoleId, permMap[name]]
+        [roleId, permMap[name]]
       );
     }
   }
 
-  // 5. Map Member Permissions: File permissions
-  const memberPermNames = ['FILE_READ', 'FILE_UPLOAD', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'];
-  for (const name of memberPermNames) {
-    if (permMap[name]) {
-      await executor.query(
-        `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [memberRoleId, permMap[name]]
-      );
-    }
-  }
-
-  return { adminRoleId, memberRoleId };
+  return roleId;
 }
 
 /**
@@ -80,7 +61,6 @@ async function assignUserRoles(orgId, userId, roleIds) {
     throw new Error('At least one valid role ID must be assigned to the user.');
   }
 
-  // Verify all target role IDs belong to the user's organization
   const validRoles = await pool.query(
     'SELECT id FROM roles WHERE organization_id = $1 AND id = ANY($2::uuid[])',
     [orgId, roleIds]
@@ -93,7 +73,6 @@ async function assignUserRoles(orgId, userId, roleIds) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Clear previous assigned roles for user
     await client.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
 
     for (const roleId of roleIds) {
@@ -150,18 +129,7 @@ async function hasPermission(userId, permissionName) {
 }
 
 /**
- * Get role details for an organization by name.
- */
-async function getRoleByName(orgId, roleName) {
-  const result = await pool.query(
-    `SELECT id, name FROM roles WHERE organization_id = $1 AND name = $2`,
-    [orgId, roleName]
-  );
-  return result.rows[0] || null;
-}
-
-/**
- * Get all system permissions.
+ * Get all system permissions catalog.
  */
 async function getAllPermissions() {
   const result = await pool.query(
@@ -171,7 +139,7 @@ async function getAllPermissions() {
 }
 
 /**
- * List all organization roles with their permissions.
+ * List all organization roles with mapped permissions.
  */
 async function getOrganizationRoles(orgId) {
   const rolesRes = await pool.query(
@@ -194,7 +162,6 @@ async function getOrganizationRoles(orgId) {
       id: role.id,
       name: role.name,
       description: role.description,
-      isSystemRole: ['Admin', 'Member'].includes(role.name),
       permissions: permsRes.rows,
       createdAt: role.created_at,
     });
@@ -213,7 +180,6 @@ async function createCustomRole(orgId, name, description, permissionNames = []) 
 
   const normalizedName = name.trim();
 
-  // Check if role name already exists in org
   const existing = await pool.query(
     'SELECT id FROM roles WHERE organization_id = $1 AND LOWER(name) = LOWER($2)',
     [orgId, normalizedName]
@@ -264,7 +230,7 @@ async function createCustomRole(orgId, name, description, permissionNames = []) 
 }
 
 /**
- * Update permissions for a custom role.
+ * Update permissions for an organization role.
  */
 async function updateRolePermissions(orgId, roleId, permissionNames = []) {
   const roleCheck = await pool.query(
@@ -305,7 +271,7 @@ async function updateRolePermissions(orgId, roleId, permissionNames = []) {
 }
 
 /**
- * Delete a custom role from an organization.
+ * Delete a role from an organization.
  */
 async function deleteCustomRole(orgId, roleId) {
   const roleCheck = await pool.query(
@@ -316,22 +282,16 @@ async function deleteCustomRole(orgId, roleId) {
     throw new Error('Role not found or does not belong to this organization.');
   }
 
-  const roleName = roleCheck.rows[0].name;
-  if (['Admin', 'Member'].includes(roleName)) {
-    throw new Error('Default system roles (Admin, Member) cannot be deleted.');
-  }
-
   await pool.query('DELETE FROM roles WHERE id = $1 AND organization_id = $2', [roleId, orgId]);
 }
 
 module.exports = {
-  seedOrganizationRoles,
+  createInitialOrgRole,
   assignRoleToUser,
   assignUserRoles,
   getUserPermissions,
   getUserRoles,
   hasPermission,
-  getRoleByName,
   getAllPermissions,
   getOrganizationRoles,
   createCustomRole,

@@ -23,14 +23,8 @@ function verifyToken(req, res, next) {
     const decoded = jwt.verify(token, secret);
 
     // Fail closed: Ensure required identity fields exist in verified token
-    if (!decoded || !decoded.userId || !decoded.orgId || !decoded.role) {
+    if (!decoded || !decoded.userId || !decoded.orgId) {
       return res.status(401).json({ message: 'Invalid or incomplete identity token context.' });
-    }
-
-    // Basic Device/Session Context Check (Phase 9A)
-    const clientDeviceId = req.headers['x-client-device-id'];
-    if (clientDeviceId && decoded.deviceId && clientDeviceId !== decoded.deviceId) {
-      return res.status(401).json({ message: 'Device context mismatch. Authentication token is invalid for this device.' });
     }
 
     // Server-side Identity Enforcement: Store verified claims strictly in req.user
@@ -38,8 +32,6 @@ function verifyToken(req, res, next) {
       userId: String(decoded.userId),
       orgId: String(decoded.orgId),
       email: String(decoded.email || ''),
-      role: String(decoded.role),
-      deviceId: decoded.deviceId ? String(decoded.deviceId) : null,
     };
 
     // Fail-safe: Prevent client-side body tampering from overriding verified server-side identity

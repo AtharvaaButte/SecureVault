@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const { pool } = require('../db');
 
 /**
- * Cycle 10.6 Tamper-Evident Security Event Auditing Service
+ * Simplified Tamper-Evident Security Event Auditing Service (Cycle 10.6)
  * Implements SHA-256 cryptographic hash chain verification.
  */
 
@@ -13,14 +13,11 @@ function computeRecordHash(data, previousHash) {
     data.id || '',
     data.organizationId || '',
     data.userId || '',
-    data.userEmail || '',
     data.eventType || '',
     data.action || '',
     data.resourceId || '',
     data.ipAddress || '',
     data.locationLabel || '',
-    data.deviceId || '',
-    data.reason || '',
     data.createdAt || '',
   ].join('|');
 
@@ -33,17 +30,13 @@ function computeRecordHash(data, previousHash) {
 async function recordAuditEvent({
   organizationId,
   userId,
-  userEmail,
   eventType,
   action,
   resourceId,
   ipAddress,
   locationLabel,
-  deviceId,
-  reason,
 }) {
   try {
-    // 1. Fetch most recent audit log entry for organization to obtain previous_hash
     let previousHash = GENESIS_HASH;
     const lastLogRes = await pool.query(
       `SELECT current_hash FROM audit_logs 
@@ -64,14 +57,11 @@ async function recordAuditEvent({
       id,
       organizationId,
       userId,
-      userEmail,
       eventType,
       action,
       resourceId,
       ipAddress,
       locationLabel,
-      deviceId,
-      reason,
       createdAt,
     };
 
@@ -79,20 +69,17 @@ async function recordAuditEvent({
 
     await pool.query(
       `INSERT INTO audit_logs 
-        (id, organization_id, user_id, user_email, event_type, action, resource_id, ip_address, location_label, device_id, reason, previous_hash, current_hash, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        (id, organization_id, user_id, event_type, action, resource_id, ip_address, location_label, previous_hash, current_hash, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         id,
         organizationId,
         userId,
-        userEmail,
         eventType,
         action,
         resourceId,
         ipAddress,
         locationLabel,
-        deviceId,
-        reason,
         previousHash,
         currentHash,
         createdAt,
@@ -109,7 +96,7 @@ async function recordAuditEvent({
 async function verifyAuditChain(organizationId) {
   try {
     const logsRes = await pool.query(
-      `SELECT id, organization_id, user_id, user_email, event_type, action, resource_id, ip_address, location_label, device_id, reason, previous_hash, current_hash, created_at
+      `SELECT id, organization_id, user_id, event_type, action, resource_id, ip_address, location_label, previous_hash, current_hash, created_at
        FROM audit_logs
        WHERE organization_id = $1
        ORDER BY created_at ASC, id ASC`,
@@ -141,14 +128,11 @@ async function verifyAuditChain(organizationId) {
         id: row.id,
         organizationId: row.organization_id,
         userId: row.user_id,
-        userEmail: row.user_email,
         eventType: row.event_type,
         action: row.action,
         resourceId: row.resource_id,
         ipAddress: row.ip_address,
         locationLabel: row.location_label,
-        deviceId: row.device_id,
-        reason: row.reason,
         createdAt: new Date(row.created_at).toISOString(),
       };
 
@@ -180,7 +164,7 @@ async function verifyAuditChain(organizationId) {
 
 async function getOrganizationAuditLogs(organizationId, limit = 50) {
   const result = await pool.query(
-    `SELECT id, organization_id, user_id, user_email, event_type, action, resource_id, ip_address, location_label, device_id, reason, previous_hash, current_hash, created_at
+    `SELECT id, organization_id, user_id, event_type, action, resource_id, ip_address, location_label, previous_hash, current_hash, created_at
      FROM audit_logs
      WHERE organization_id = $1
      ORDER BY created_at DESC
