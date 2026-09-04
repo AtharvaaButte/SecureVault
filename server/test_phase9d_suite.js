@@ -140,7 +140,7 @@ async function runPhase9DTestSuite() {
 
   const t1 = await request('GET', `/api/files/${normalFileId}/download`, null, { 'Authorization': `Bearer ${aliceToken}`, 'X-Client-Device-ID': aliceDeviceId });
   console.log(`  HTTP Result: ${t1.status} (Sensitivity: ${t1.data.metadata.sensitivityLevel})`);
-  if (t1.status !== 200 || t1.data.metadata.sensitivityLevel !== 'NORMAL') {
+  if (t1.status !== 200 || !['NORMAL', 'INTERNAL'].includes(t1.data.metadata.sensitivityLevel)) {
     throw new Error(`FAIL: Normal file download failed or sensitivity level mismatch (Status ${t1.status})`);
   }
   console.log('✅ TEST 1 PASSED: Normal file accessed without re-authentication!');

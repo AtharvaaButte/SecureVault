@@ -5,8 +5,8 @@ const { evaluateContextualDecision } = require('./decisionEngine');
  * Delegates to decisionEngine.js for explainable decision matrix evaluation.
  */
 
-async function evaluateRisk(userId, req, operationType, sensitivityLevel = 'NORMAL') {
-  return await evaluateContextualDecision(userId, req, operationType, sensitivityLevel);
+async function evaluateRisk(userId, req, operationType, dataClassification = 'INTERNAL') {
+  return await evaluateContextualDecision(userId, req, operationType, dataClassification);
 }
 
 module.exports = {

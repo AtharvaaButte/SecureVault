@@ -69,7 +69,7 @@ function requireFileAccess(accessType) {
 
       // 2. Fetch file details from PostgreSQL
       const result = await pool.query(
-        `SELECT f.id, f.owner_id, f.sensitivity_level, u.organization_id 
+        `SELECT f.id, f.owner_id, f.data_classification, u.organization_id 
          FROM files f 
          JOIN users u ON f.owner_id = u.id 
          WHERE f.id = $1`,
@@ -119,7 +119,7 @@ function requireFileAccess(accessType) {
         req.user.userId,
         req,
         requiredPerm,
-        fileRecord.sensitivity_level || 'NORMAL'
+        fileRecord.data_classification || 'INTERNAL'
       );
 
       if (!riskResult.allow) {

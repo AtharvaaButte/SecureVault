@@ -18,7 +18,7 @@ router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.sin
       return res.status(400).json({ message: 'Ciphertext file payload is required.' });
     }
 
-    const { fileId: clientFileId, originalName, originalSize, iv, authTag, algorithm, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey, sensitivityLevel } = req.body;
+    const { fileId: clientFileId, originalName, originalSize, iv, authTag, algorithm, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey, dataClassification, sensitivityLevel } = req.body;
 
     if (!originalName || !iv || !authTag) {
       return res.status(400).json({ message: 'Missing required encryption metadata (originalName, iv, authTag).' });
@@ -30,9 +30,14 @@ router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.sin
       : crypto.randomUUID();
     const storageKey = `files/${fileId}/encrypted`;
 
-    const normalizedSensitivity = ['NORMAL', 'SENSITIVE', 'HIGHLY_SENSITIVE'].includes(sensitivityLevel)
-      ? sensitivityLevel
-      : 'NORMAL';
+    let rawClass = String(dataClassification || sensitivityLevel || 'INTERNAL').toUpperCase();
+    if (rawClass === 'NORMAL') rawClass = 'INTERNAL';
+    if (rawClass === 'SENSITIVE') rawClass = 'CONFIDENTIAL';
+    if (rawClass === 'HIGHLY_SENSITIVE') rawClass = 'HIGHLY_CONFIDENTIAL';
+
+    const normalizedClassification = ['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'HIGHLY_CONFIDENTIAL'].includes(rawClass)
+      ? rawClass
+      : 'INTERNAL';
 
     // 1. Upload ciphertext Buffer to B2 bucket
     await uploadToB2(storageKey, req.file.buffer, 'application/octet-stream');
@@ -40,9 +45,9 @@ router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.sin
     // 2. Insert metadata record into PostgreSQL files table
     const result = await pool.query(
       `INSERT INTO files 
-        (id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, sensitivity_level) 
+        (id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, data_classification) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
-       RETURNING id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, sensitivity_level, created_at`,
+       RETURNING id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, data_classification, created_at`,
       [
         fileId,
         ownerId,
@@ -52,7 +57,7 @@ router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.sin
         algorithm || 'AES-256-GCM',
         iv,
         authTag,
-        normalizedSensitivity,
+        normalizedClassification,
       ]
     );
 
@@ -96,7 +101,8 @@ router.post('/upload', verifyToken, requirePermission('FILE_UPLOAD'), upload.sin
         originalName: savedFile.original_name,
         originalSize: savedFile.original_size,
         storageKey: savedFile.storage_key,
-        sensitivityLevel: savedFile.sensitivity_level,
+        dataClassification: savedFile.data_classification,
+        sensitivityLevel: savedFile.data_classification,
         createdAt: savedFile.created_at,
       },
     });
@@ -112,7 +118,7 @@ router.get('/', verifyToken, requirePermission('FILE_READ'), async (req, res) =>
     const ownerId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, sensitivity_level, created_at 
+      `SELECT id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, data_classification, created_at 
        FROM files 
        WHERE owner_id = $1 
        ORDER BY created_at DESC`,
@@ -127,7 +133,8 @@ router.get('/', verifyToken, requirePermission('FILE_READ'), async (req, res) =>
       algorithm: row.encryption_algorithm,
       iv: row.iv,
       authTag: row.auth_tag,
-      sensitivityLevel: row.sensitivity_level,
+      dataClassification: row.data_classification,
+      sensitivityLevel: row.data_classification,
       createdAt: row.created_at,
     }));
 
@@ -144,7 +151,7 @@ router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, r
     const currentUserId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT f.id, f.original_name, f.original_size, f.storage_key, f.encryption_algorithm, f.iv, f.auth_tag, f.sensitivity_level, f.created_at,
+      `SELECT f.id, f.original_name, f.original_size, f.storage_key, f.encryption_algorithm, f.iv, f.auth_tag, f.data_classification, f.created_at,
               fk.sender_public_key, fk.wrapped_dek, fk.wrap_salt, fk.wrap_iv, fk.wrap_auth_tag, fk.access_level,
               u.email AS owner_email
        FROM files f
@@ -163,7 +170,8 @@ router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, r
       algorithm: row.encryption_algorithm,
       iv: row.iv,
       authTag: row.auth_tag,
-      sensitivityLevel: row.sensitivity_level,
+      dataClassification: row.data_classification,
+      sensitivityLevel: row.data_classification,
       accessLevel: row.access_level || 'READ',
       createdAt: row.created_at,
       ownerEmail: row.owner_email,
@@ -360,7 +368,7 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
 
     // Fetch full file metadata from PostgreSQL
     const fileResult = await pool.query(
-      'SELECT id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, sensitivity_level, created_at FROM files WHERE id = $1',
+      'SELECT id, owner_id, original_name, original_size, storage_key, encryption_algorithm, iv, auth_tag, data_classification, created_at FROM files WHERE id = $1',
       [fileId]
     );
 
@@ -403,7 +411,8 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
         algorithm: fileRecord.encryption_algorithm,
         iv: fileRecord.iv,
         authTag: fileRecord.auth_tag,
-        sensitivityLevel: fileRecord.sensitivity_level,
+        dataClassification: fileRecord.data_classification,
+        sensitivityLevel: fileRecord.data_classification,
         createdAt: fileRecord.created_at,
       },
     };

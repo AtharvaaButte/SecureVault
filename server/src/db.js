@@ -4,7 +4,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const pool = new Pool({
-  connectionString: process.process ? process.env.DATABASE_URL : process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL,
   idleTimeoutMillis: 5000,
   connectionTimeoutMillis: 3000,
 });
@@ -38,7 +38,7 @@ async function initDb() {
       );
     `);
 
-    // 2. Users Table (Legacy users.role and users.public_key removed)
+    // 2. Users Table (No legacy role or public_key columns)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -49,12 +49,7 @@ async function initDb() {
       );
     `);
 
-    await pool.query(`
-      ALTER TABLE users DROP COLUMN IF EXISTS role;
-      ALTER TABLE users DROP COLUMN IF EXISTS public_key;
-    `);
-
-    // 3. User Keys Table (Separate Cryptographic Identity - X25519)
+    // 3. User Keys Table (Cryptographic Identity - X25519)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_keys (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -89,10 +84,6 @@ async function initDb() {
       );
     `);
 
-    await pool.query(`
-      ALTER TABLE roles ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
-    `);
-
     // 6. Role-Permissions Junction Table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS role_permissions (
@@ -111,7 +102,7 @@ async function initDb() {
       );
     `);
 
-    // 8. Files Table (sensitivity_level preserved: NORMAL, SENSITIVE, HIGHLY_SENSITIVE)
+    // 8. Files Table (data_classification: PUBLIC, INTERNAL, CONFIDENTIAL, HIGHLY_CONFIDENTIAL)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS files (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,7 +113,7 @@ async function initDb() {
         encryption_algorithm VARCHAR(50) NOT NULL DEFAULT 'AES-256-GCM',
         iv VARCHAR(255) NOT NULL,
         auth_tag VARCHAR(255) NOT NULL,
-        sensitivity_level VARCHAR(30) NOT NULL DEFAULT 'NORMAL' CHECK (sensitivity_level IN ('NORMAL', 'SENSITIVE', 'HIGHLY_SENSITIVE')),
+        data_classification VARCHAR(30) NOT NULL DEFAULT 'INTERNAL' CHECK (data_classification IN ('PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'HIGHLY_CONFIDENTIAL')),
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -144,7 +135,7 @@ async function initDb() {
       );
     `);
 
-    // 10. File Restrictions Table (Per-user, per-file operation blocks: FILE_SHARE, FILE_REVOKE, FILE_DELETE)
+    // 10. File Restrictions Table (Per-user, per-file operation blocks)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS file_restrictions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -160,10 +151,7 @@ async function initDb() {
       CREATE INDEX IF NOT EXISTS idx_file_restrictions_lookup ON file_restrictions(file_id, user_id);
     `);
 
-    // Recreate user_devices table cleanly with user_id PRIMARY KEY if needed
-    await pool.query(`DROP TABLE IF EXISTS user_devices CASCADE;`);
-
-    // 11. Simplified User Devices Table (Keyed by user_id for location context)
+    // 11. User Devices Table (Keyed by user_id for location context)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_devices (
         user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -188,13 +176,7 @@ async function initDb() {
       );
     `);
 
-    await pool.query(`
-      ALTER TABLE organization_policies DROP COLUMN IF EXISTS allowed_country;
-      ALTER TABLE organization_policies DROP COLUMN IF EXISTS allowed_state;
-      ALTER TABLE organization_policies DROP COLUMN IF EXISTS allowed_city;
-    `);
-
-    // 13. Multiple Allowed Geographic Locations Table (Separate Table)
+    // 13. Multiple Allowed Geographic Locations Table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS organization_geo_policies (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -230,18 +212,11 @@ async function initDb() {
     `);
 
     await pool.query(`
-      ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS resource_type VARCHAR(50) NOT NULL DEFAULT 'FILE';
-      ALTER TABLE audit_logs DROP COLUMN IF EXISTS user_email;
-      ALTER TABLE audit_logs DROP COLUMN IF EXISTS device_id;
-      ALTER TABLE audit_logs DROP COLUMN IF EXISTS reason;
-    `);
-
-    await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_audit_org_time ON audit_logs(organization_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_audit_user_time ON audit_logs(user_id, created_at DESC);
     `);
 
-    // 15. Permission Audit View (Item 9: Read-only reporting view)
+    // 15. Permission Audit View
     await pool.query(`
       CREATE OR REPLACE VIEW user_permission_audit_view AS
       SELECT 
@@ -282,7 +257,7 @@ async function initDb() {
       );
     }
 
-    console.log('[DB] Finalized security schema, user_keys, file_restrictions, geo/audit indexes, and permission audit view initialized successfully.');
+    console.log('[DB] Finalized clean security schema initialized successfully from scratch.');
   } catch (error) {
     console.error('[DB] Database initialization error:', error.message);
   }

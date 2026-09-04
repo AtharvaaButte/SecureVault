@@ -8,7 +8,7 @@ const auditService = require('./auditService');
  * Contextual Risk Decision Engine
  */
 
-async function evaluateContextualDecision(userId, req, operationType, sensitivityLevel = 'NORMAL') {
+async function evaluateContextualDecision(userId, req, operationType, dataClassification = 'INTERNAL') {
   // 1. Location Context Extraction
   const location = geoService.extractLocation(req);
 
@@ -70,22 +70,27 @@ async function evaluateContextualDecision(userId, req, operationType, sensitivit
     }
   }
 
-  // 4. Evaluate Resource Sensitivity Level Policy (NORMAL / SENSITIVE / HIGHLY_SENSITIVE preserved)
-  const normalizedSensitivity = ['NORMAL', 'SENSITIVE', 'HIGHLY_SENSITIVE'].includes(sensitivityLevel)
-    ? sensitivityLevel
-    : 'NORMAL';
+  // 4. Evaluate Resource Data Classification Policy (PUBLIC, INTERNAL, CONFIDENTIAL, HIGHLY_CONFIDENTIAL)
+  let rawClass = String(dataClassification || 'INTERNAL').toUpperCase();
+  if (rawClass === 'NORMAL') rawClass = 'INTERNAL';
+  if (rawClass === 'SENSITIVE') rawClass = 'CONFIDENTIAL';
+  if (rawClass === 'HIGHLY_SENSITIVE') rawClass = 'HIGHLY_CONFIDENTIAL';
+
+  const normalizedClassification = ['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'HIGHLY_CONFIDENTIAL'].includes(rawClass)
+    ? rawClass
+    : 'INTERNAL';
 
   const highImpactOps = ['FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE', 'USER_CREATE', 'USER_MANAGE', 'ROLE_MANAGE', 'ORG_MANAGE'];
   const isHighImpact = highImpactOps.includes(operationType);
 
-  if (normalizedSensitivity === 'HIGHLY_SENSITIVE') {
+  if (normalizedClassification === 'HIGHLY_CONFIDENTIAL') {
     riskFactors.push('HIGHLY_SENSITIVE_RESOURCE');
     if (operationType === 'FILE_READ' || isHighImpact) {
       stepUpTriggered = true;
       if (!triggerReason) triggerReason = `Step-up re-authentication required to access HIGHLY_SENSITIVE file (${operationType}).`;
       if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_HIGHLY_SENSITIVE_RESOURCE';
     }
-  } else if (normalizedSensitivity === 'SENSITIVE') {
+  } else if (normalizedClassification === 'CONFIDENTIAL') {
     riskFactors.push('SENSITIVE_RESOURCE');
     if (isHighImpact && orgPolicyWithGeo.require_stepup_sensitive_file) {
       stepUpTriggered = true;

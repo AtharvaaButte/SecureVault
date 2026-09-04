@@ -243,7 +243,7 @@ ipcMain.handle('decrypt-file', async (_event, fileId) => {
 });
 
 // --- IPC Handlers for Cloud Upload (Phase 9D with sensitivityLevel & reauthPassword) ---
-ipcMain.handle('upload-ciphertext', async (_event, { fileId, sensitivityLevel, token, reauthPassword }) => {
+ipcMain.handle('upload-ciphertext', async (_event, { fileId, dataClassification, sensitivityLevel, token, reauthPassword }) => {
   try {
     const tempDir = tempStorage.getTempDir(app);
     const metadata = tempStorage.readMetadata(tempDir, fileId);
@@ -257,7 +257,8 @@ ipcMain.handle('upload-ciphertext', async (_event, { fileId, sensitivityLevel, t
     formData.append('iv', metadata.iv);
     formData.append('authTag', metadata.authTag);
     formData.append('algorithm', metadata.algorithm);
-    formData.append('sensitivityLevel', sensitivityLevel || 'NORMAL');
+    formData.append('dataClassification', dataClassification || sensitivityLevel || 'INTERNAL');
+    formData.append('sensitivityLevel', dataClassification || sensitivityLevel || 'INTERNAL');
 
     // Wrap DEK for owner so the owner can recover DEK after application restart
     const dek = fileCrypto.getDek(fileId);

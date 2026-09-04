@@ -21,7 +21,7 @@ export default function App() {
   const [encryptResult, setEncryptResult] = useState(null);
 
   // Upload & File Listing state
-  const [uploadSensitivity, setUploadSensitivity] = useState('NORMAL');
+  const [uploadSensitivity, setUploadSensitivity] = useState('INTERNAL');
   const [fileList, setFileList] = useState([]);
   const [downloadStatus, setDownloadStatus] = useState({});
 
@@ -637,6 +637,7 @@ export default function App() {
     try {
       const res = await window.electronAPI.uploadCiphertext({
         fileId: encryptResult.fileId,
+        dataClassification: uploadSensitivity,
         sensitivityLevel: uploadSensitivity,
         token,
         reauthPassword: reauthPwd,
@@ -1022,12 +1023,13 @@ export default function App() {
 
           {encryptResult && (
             <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '10px', marginBottom: '24px', border: '1px solid #334155' }}>
-              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#f8fafc' }}>2. Cloud Upload & Sensitivity Classification</h3>
+              <h3 style={{ marginTop: 0, fontSize: '16px', color: '#f8fafc' }}>2. Cloud Upload & Data Classification</h3>
               <div style={{ marginBottom: '16px' }}>
                 <select value={uploadSensitivity} onChange={(e) => setUploadSensitivity(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#0f172a', color: '#fff', border: '1px solid #475569' }}>
-                  <option value="NORMAL">🟢 NORMAL (Standard Security)</option>
-                  <option value="SENSITIVE">🟡 SENSITIVE (Step-Up on Share/Revoke)</option>
-                  <option value="HIGHLY_SENSITIVE">🔴 HIGHLY_SENSITIVE (Step-Up on Download & Share)</option>
+                  <option value="INTERNAL">🟢 INTERNAL (Standard Security)</option>
+                  <option value="CONFIDENTIAL">🟡 CONFIDENTIAL (Step-Up on Share/Revoke)</option>
+                  <option value="HIGHLY_CONFIDENTIAL">🔴 HIGHLY_CONFIDENTIAL (Step-Up on Download & Share)</option>
+                  <option value="PUBLIC">⚪ PUBLIC (Unclassified)</option>
                 </select>
               </div>
               <button onClick={() => handleCloudUpload()} disabled={loading} style={{ padding: '10px 18px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer' }}>
