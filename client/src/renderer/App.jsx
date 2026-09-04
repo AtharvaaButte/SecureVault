@@ -986,7 +986,7 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#f8fafc', fontFamily: 'sans-serif', padding: '24px' }}>
 
-      {/* STEP-UP RE-AUTHENTICATION MODAL (Requirement 10 & 11) */}
+      {/* STEP-UP RE-AUTHENTICATION MODAL */}
       {stepUpModal.show && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
           <div style={{ backgroundColor: '#1e293b', border: '2px solid #eab308', borderRadius: '12px', padding: '28px', maxWidth: '440px', width: '100%', color: '#fff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
@@ -1065,20 +1065,24 @@ export default function App() {
           <div style={{ backgroundColor: '#1e293b', border: '1px solid #38bdf8', borderRadius: '12px', padding: '24px', maxWidth: '520px', width: '100%', color: '#fff' }}>
             <h3 style={{ marginTop: 0, color: '#38bdf8' }}>Edit Role Permissions: {editingRole.name}</h3>
             <div style={{ maxHeight: '260px', overflowY: 'auto', marginBottom: '16px', backgroundColor: '#0f172a', padding: '10px', borderRadius: '6px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              {allPermissions.map((p) => (
-                <label key={p} style={{ fontSize: '12px', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={editRolePerms.includes(p)}
-                    onChange={(e) => {
-                      if (e.target.checked) setEditRolePerms((prev) => [...prev, p]);
-                      else setEditRolePerms((prev) => prev.filter((item) => item !== p));
-                    }}
-                    style={{ marginRight: '6px' }}
-                  />
-                  {p}
-                </label>
-              ))}
+              {allPermissions.map((p) => {
+                const permName = typeof p === 'string' ? p : p.name;
+                const permId = typeof p === 'string' ? p : (p.id || p.name);
+                return (
+                  <label key={permId} style={{ fontSize: '12px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={editRolePerms.includes(permName)}
+                      onChange={(e) => {
+                        if (e.target.checked) setEditRolePerms((prev) => [...prev, permName]);
+                        else setEditRolePerms((prev) => prev.filter((item) => item !== permName));
+                      }}
+                      style={{ marginRight: '6px' }}
+                    />
+                    {permName}
+                  </label>
+                );
+              })}
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button onClick={() => setEditingRole(null)} style={{ padding: '8px 14px', backgroundColor: '#334155', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
@@ -1103,19 +1107,27 @@ export default function App() {
               
               <div style={{ marginBottom: '10px' }}>
                 <strong>Assigned Roles:</strong>{' '}
-                {userAssignedRoles.map((r) => (
-                  <span key={r.id} style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: '#0369a1', color: '#fff', fontWeight: 'bold', marginRight: '4px', fontSize: '11px' }}>
-                    {r.name}
-                  </span>
-                ))}
+                {userAssignedRoles.map((r) => {
+                  const roleId = typeof r === 'string' ? r : r.id;
+                  const roleName = typeof r === 'string' ? r : r.name;
+                  return (
+                    <span key={roleId || roleName} style={{ padding: '2px 8px', borderRadius: '4px', backgroundColor: '#0369a1', color: '#fff', fontWeight: 'bold', marginRight: '4px', fontSize: '11px' }}>
+                      {roleName}
+                    </span>
+                  );
+                })}
               </div>
               
               <div style={{ marginBottom: '14px' }}>
                 <strong>Effective Dynamic RBAC Permissions:</strong>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
-                  {userPermissions.map((p) => (
-                    <span key={p} style={{ padding: '3px 8px', borderRadius: '4px', backgroundColor: p.startsWith('FILE_') ? '#0284c7' : '#7c3aed', color: '#fff', fontSize: '11px' }}>{p}</span>
-                  ))}
+                  {userPermissions.map((p) => {
+                    const permName = typeof p === 'string' ? p : p.name;
+                    const permId = typeof p === 'string' ? p : (p.id || p.name);
+                    return (
+                      <span key={permId} style={{ padding: '3px 8px', borderRadius: '4px', backgroundColor: String(permName).startsWith('FILE_') ? '#0284c7' : '#7c3aed', color: '#fff', fontSize: '11px' }}>{permName}</span>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1128,7 +1140,7 @@ export default function App() {
         <div>
           <h2 style={{ margin: 0, fontSize: '20px', color: '#38bdf8' }}>🔒 SecureVault</h2>
           <div style={{ fontSize: '12px', color: '#cbd5e1', marginTop: '4px' }}>
-            Org: <strong>{currentOrg?.name}</strong> | User: <strong>{currentUser?.email}</strong> | Roles: {userAssignedRoles.map((r) => r.name).join(', ') || 'No Role Assigned'}
+            Org: <strong>{currentOrg?.name}</strong> | User: <strong>{currentUser?.email}</strong> | Roles: {userAssignedRoles.map((r) => typeof r === 'string' ? r : r.name).join(', ') || 'No Role Assigned'}
           </div>
         </div>
 
@@ -1148,7 +1160,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* NAVIGATION TABS BAR (Requirement 2 & 14) */}
+      {/* NAVIGATION TABS BAR */}
       <nav style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #334155', paddingBottom: '12px', marginBottom: '20px' }}>
         <button
           onClick={() => { setNavTab('files'); setError(null); setSuccessMsg(null); }}
@@ -1236,7 +1248,7 @@ export default function App() {
                   <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '10px', marginBottom: '24px', border: '1px solid #334155' }}>
                     <h3 style={{ marginTop: 0, fontSize: '16px', color: '#f8fafc' }}>2. Cloud Upload & Data Classification</h3>
                     <div style={{ marginBottom: '16px' }}>
-                      <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#cbd5e1' }}>Data Classification (Requirement 9)</label>
+                      <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#cbd5e1' }}>Data Classification</label>
                       <select value={uploadClassification} onChange={(e) => setUploadClassification(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', backgroundColor: '#0f172a', color: '#fff', border: '1px solid #475569' }}>
                         <option value="PUBLIC">⚪ PUBLIC (Unclassified)</option>
                         <option value="INTERNAL">🟢 INTERNAL (Standard Security)</option>
@@ -1283,7 +1295,7 @@ export default function App() {
                         <button onClick={() => handleDownloadFile(f.id, f.dataClassification)} style={{ padding: '6px 12px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}>⬇️ Download & Decrypt</button>
                       </div>
 
-                      {/* FILE SHARING CONTROL (Requirements 6, 7 & 8) */}
+                      {/* FILE SHARING CONTROL */}
                       {userPermissions.includes('FILE_SHARE') && (
                         <div style={{ padding: '12px', backgroundColor: '#1e293b', borderRadius: '6px', border: '1px solid #334155' }}>
                           <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#38bdf8', marginBottom: '8px' }}>🤝 Share File with Organization User</div>
@@ -1310,14 +1322,14 @@ export default function App() {
                             </select>
                           </div>
 
-                          {/* Step 2: Display Selected User's Organization Permissions (Requirement 7) */}
+                          {/* Step 2: Display Selected User's Organization Permissions */}
                           {recipient && (
                             <div style={{ backgroundColor: '#0f172a', padding: '10px', borderRadius: '6px', fontSize: '11px', marginBottom: '10px', border: '1px solid #334155' }}>
                               <div style={{ color: '#cbd5e1', fontWeight: 'bold', marginBottom: '4px' }}>
                                 Selected User: <span>{recipient.email}</span>
                               </div>
                               <div style={{ marginBottom: '4px' }}>
-                                <strong>Assigned Roles:</strong> {recipient.roles && recipient.roles.length > 0 ? recipient.roles.map(r => r.name).join(', ') : 'None'}
+                                <strong>Assigned Roles:</strong> {recipient.roles && recipient.roles.length > 0 ? recipient.roles.map((r) => typeof r === 'string' ? r : (r.name || r.id)).join(', ') : 'None'}
                               </div>
                               <div style={{ color: '#cbd5e1' }}>
                                 <strong>Effective Organization Permissions:</strong>
@@ -1331,7 +1343,7 @@ export default function App() {
                             </div>
                           )}
 
-                          {/* Step 3: Explanation of File-Specific Restrictions (Requirement 8) */}
+                          {/* Step 3: Explanation of File-Specific Restrictions */}
                           <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '10px' }}>
                             {shareAccessLevels[f.id] === 'READ' ? (
                               <span>🔒 <strong>File Restriction Applied:</strong> Recipient can read/download, but will be explicitly restricted from re-sharing, revoking, or deleting this specific file (even if their role has those general permissions).</span>
@@ -1389,7 +1401,7 @@ export default function App() {
         </div>
       )}
 
-      {/* TAB 2: USER MANAGEMENT (Requirement 1 & 2) */}
+      {/* TAB 2: USER MANAGEMENT */}
       {navTab === 'users' && (
         <div style={{ backgroundColor: '#1e293b', padding: '24px', borderRadius: '10px', border: '1px solid #334155' }}>
           <h3 style={{ marginTop: 0, fontSize: '18px', color: '#38bdf8' }}>👥 Organization User Management</h3>
@@ -1459,11 +1471,15 @@ export default function App() {
                     {u.id === currentUser?.id && <span style={{ marginLeft: '6px', fontSize: '10px', color: '#38bdf8' }}>(You)</span>}
                   </td>
                   <td style={{ padding: '10px' }}>
-                    {(u.roles || []).map((r) => (
-                      <span key={r.id} style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#0369a1', color: '#fff', fontSize: '11px', marginRight: '4px' }}>
-                        {r.name}
-                      </span>
-                    ))}
+                    {(u.roles || []).map((r) => {
+                      const roleId = typeof r === 'string' ? r : r.id;
+                      const roleName = typeof r === 'string' ? r : r.name;
+                      return (
+                        <span key={roleId || roleName} style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#0369a1', color: '#fff', fontSize: '11px', marginRight: '4px' }}>
+                          {roleName}
+                        </span>
+                      );
+                    })}
                   </td>
                   <td style={{ padding: '10px', fontSize: '11px', color: '#94a3b8' }}>
                     {(u.permissions || []).join(', ')}
@@ -1473,7 +1489,7 @@ export default function App() {
                       <button
                         onClick={() => {
                           setEditingUser(u);
-                          setEditUserRoleIds((u.roles || []).map((r) => r.id));
+                          setEditUserRoleIds((u.roles || []).map((r) => typeof r === 'string' ? r : r.id));
                         }}
                         style={{ padding: '4px 10px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
                       >
@@ -1488,7 +1504,7 @@ export default function App() {
         </div>
       )}
 
-      {/* TAB 3: CUSTOM ROLE MANAGEMENT (Requirement 3) */}
+      {/* TAB 3: CUSTOM ROLE MANAGEMENT */}
       {navTab === 'roles' && (
         <div style={{ backgroundColor: '#1e293b', padding: '24px', borderRadius: '10px', border: '1px solid #334155' }}>
           <h3 style={{ marginTop: 0, fontSize: '18px', color: '#38bdf8' }}>⚙️ Custom Role Management</h3>
@@ -1514,20 +1530,24 @@ export default function App() {
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', fontSize: '12px', marginBottom: '6px', color: '#cbd5e1' }}>Select System Permissions Catalog:</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', backgroundColor: '#1e293b', padding: '12px', borderRadius: '6px', border: '1px solid #334155' }}>
-                  {allPermissions.map((p) => (
-                    <label key={p} style={{ fontSize: '12px', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={newRolePerms.includes(p)}
-                        onChange={(e) => {
-                          if (e.target.checked) setNewRolePerms((prev) => [...prev, p]);
-                          else setNewRolePerms((prev) => prev.filter((item) => item !== p));
-                        }}
-                        style={{ marginRight: '6px' }}
-                      />
-                      {p}
-                    </label>
-                  ))}
+                  {allPermissions.map((p) => {
+                    const permName = typeof p === 'string' ? p : p.name;
+                    const permId = typeof p === 'string' ? p : (p.id || p.name);
+                    return (
+                      <label key={permId} style={{ fontSize: '12px', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={newRolePerms.includes(permName)}
+                          onChange={(e) => {
+                            if (e.target.checked) setNewRolePerms((prev) => [...prev, permName]);
+                            else setNewRolePerms((prev) => prev.filter((item) => item !== permName));
+                          }}
+                          style={{ marginRight: '6px' }}
+                        />
+                        {permName}
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1554,16 +1574,23 @@ export default function App() {
                   <td style={{ padding: '10px' }}><strong>{r.name}</strong></td>
                   <td style={{ padding: '10px', color: '#cbd5e1' }}>{r.description || '-'}</td>
                   <td style={{ padding: '10px' }}>
-                    {(r.permissions || []).map((p) => (
-                      <span key={p} style={{ display: 'inline-block', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#334155', color: '#38bdf8', fontSize: '11px', marginRight: '4px', marginBottom: '2px' }}>
-                        {p}
-                      </span>
-                    ))}
+                    {(r.permissions || []).map((p) => {
+                      const permName = typeof p === 'string' ? p : p.name;
+                      const permId = typeof p === 'string' ? p : (p.id || p.name);
+                      return (
+                        <span key={permId} style={{ display: 'inline-block', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#334155', color: '#38bdf8', fontSize: '11px', marginRight: '4px', marginBottom: '2px' }}>
+                          {permName}
+                        </span>
+                      );
+                    })}
                   </td>
                   <td style={{ padding: '10px' }}>
                     <div style={{ display: 'flex', gap: '6px' }}>
                       <button
-                        onClick={() => { setEditingRole(r); setEditRolePerms(r.permissions || []); }}
+                        onClick={() => {
+                          setEditingRole(r);
+                          setEditRolePerms((r.permissions || []).map((p) => typeof p === 'string' ? p : p.name));
+                        }}
                         style={{ padding: '4px 10px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
                       >
                         Edit
@@ -1593,7 +1620,7 @@ export default function App() {
             </thead>
             <tbody>
               {permissionAuditRecords.map((rec, idx) => (
-                <tr key={idx} style={{ borderBottom: '1px solid #334155' }}>
+                <tr key={rec.id || `${rec.email}_${rec.role_name}_${rec.permission_name}_${idx}`} style={{ borderBottom: '1px solid #334155' }}>
                   <td style={{ padding: '8px' }}>{rec.email}</td>
                   <td style={{ padding: '8px', color: '#38bdf8' }}>{rec.role_name}</td>
                   <td style={{ padding: '8px' }}><code>{rec.permission_name}</code></td>
@@ -1604,7 +1631,7 @@ export default function App() {
         </div>
       )}
 
-      {/* TAB 4: SECURITY POLICIES & GEO LOCATIONS (Requirements 4 & 5) */}
+      {/* TAB 4: SECURITY POLICIES & GEO LOCATIONS */}
       {navTab === 'policies' && (
         <div style={{ backgroundColor: '#1e293b', padding: '24px', borderRadius: '10px', border: '1px solid #334155' }}>
           <h3 style={{ marginTop: 0, fontSize: '18px', color: '#38bdf8' }}>🛡️ Organization Security Policies & Geo-Fencing</h3>
@@ -1628,7 +1655,7 @@ export default function App() {
                       style={{ marginRight: '10px', width: '16px', height: '16px' }}
                     />
                     <div>
-                      <strong>Enable Strict Geo-Fencing</strong> (Requirement 5)
+                      <strong>Enable Strict Geo-Fencing</strong>
                       <div style={{ fontSize: '11px', color: '#94a3b8' }}>When enabled, requests outside allowed geographic locations are strictly blocked with HTTP 403. Default: Disabled.</div>
                     </div>
                   </label>
@@ -1699,7 +1726,7 @@ export default function App() {
         </div>
       )}
 
-      {/* TAB 5: SECURITY AUDIT LOGS & INTEGRITY (Requirement 12) */}
+      {/* TAB 5: SECURITY AUDIT LOGS & INTEGRITY */}
       {navTab === 'audit' && (
         <div style={{ backgroundColor: '#1e293b', padding: '24px', borderRadius: '10px', border: '1px solid #334155' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
