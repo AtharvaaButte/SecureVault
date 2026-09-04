@@ -7,8 +7,8 @@ const rbacService = require('../services/rbacService');
 
 const router = express.Router();
 
-// GET /api/users/members - List organization members with assigned roles, effective permissions & user_keys status (Requires USER_MANAGE)
-router.get('/members', verifyToken, requirePermission('USER_MANAGE'), async (req, res) => {
+// GET /api/users/members - List organization members with assigned roles, effective permissions & user_keys status
+router.get('/members', verifyToken, async (req, res) => {
   try {
     const orgId = req.user.orgId;
 
@@ -40,6 +40,36 @@ router.get('/members', verifyToken, requirePermission('USER_MANAGE'), async (req
   } catch (error) {
     console.error('[Get Members Error]:', error.message);
     res.status(500).json({ message: 'Failed to retrieve organization members.' });
+  }
+});
+
+// GET /api/users/:id/permissions - Query effective roles & permissions for a specific user (Item 7)
+router.get('/:id/permissions', verifyToken, async (req, res) => {
+  try {
+    const targetUserId = req.params.id;
+    const orgId = req.user.orgId;
+
+    const userCheck = await pool.query(
+      'SELECT id, email, organization_id FROM users WHERE id = $1 AND organization_id = $2',
+      [targetUserId, orgId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found in this organization.' });
+    }
+
+    const roles = await rbacService.getUserRoles(targetUserId);
+    const permissions = await rbacService.getUserPermissions(targetUserId);
+
+    res.json({
+      userId: targetUserId,
+      email: userCheck.rows[0].email,
+      roles,
+      permissions,
+    });
+  } catch (error) {
+    console.error('[Get User Permissions Error]:', error.message);
+    res.status(500).json({ message: 'Failed to retrieve user permissions.' });
   }
 });
 

@@ -417,7 +417,7 @@ ipcMain.handle('get-user-files', async (_event, token) => {
 
 ipcMain.handle('get-organization-users', async (_event, token) => {
   try {
-    const response = await fetch('http://localhost:5000/api/users', {
+    const response = await fetch('http://localhost:5000/api/users/members', {
       headers: {
         'Authorization': `Bearer ${token}`,
         'X-Client-Device-ID': getDeviceId(),
@@ -433,7 +433,7 @@ ipcMain.handle('get-organization-users', async (_event, token) => {
   }
 });
 
-ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipientPublicKey, token, reauthPassword }) => {
+ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipientPublicKey, accessLevel, token, reauthPassword }) => {
   try {
     if (!localPrivateKeyPem) {
       throw new Error('Local cryptographic identity private key is missing.');
@@ -510,6 +510,7 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
         wrapSalt: wrappingPayload.wrapSalt,
         wrapIv: wrappingPayload.wrapIv,
         wrapAuthTag: wrappingPayload.wrapAuthTag,
+        accessLevel: accessLevel || 'READ',
       }),
     });
 

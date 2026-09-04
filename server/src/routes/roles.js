@@ -5,8 +5,8 @@ const rbacService = require('../services/rbacService');
 
 const router = express.Router();
 
-// GET /api/roles/permissions - List all available system permissions (Requires ROLE_MANAGE or USER_MANAGE)
-router.get('/permissions', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res) => {
+// GET /api/roles/permissions - List all available system permissions
+router.get('/permissions', verifyToken, async (req, res) => {
   try {
     const permissions = await rbacService.getAllPermissions();
     res.json({ permissions });
@@ -16,7 +16,7 @@ router.get('/permissions', verifyToken, requirePermission('ROLE_MANAGE'), async 
   }
 });
 
-// GET /api/roles/audit - Permission Audit View: Retrieve user-role-permission mapping (Item 9, Requires ROLE_MANAGE)
+// GET /api/roles/audit - Permission Audit View: Retrieve user-role-permission mapping (Requires ROLE_MANAGE)
 router.get('/audit', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res) => {
   try {
     const auditRecords = await rbacService.getPermissionAuditRecords(req.user.orgId);
@@ -27,8 +27,8 @@ router.get('/audit', verifyToken, requirePermission('ROLE_MANAGE'), async (req, 
   }
 });
 
-// GET /api/roles - List all roles for the current organization (Requires ROLE_MANAGE or USER_MANAGE)
-router.get('/', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res) => {
+// GET /api/roles - List all roles for the current organization
+router.get('/', verifyToken, async (req, res) => {
   try {
     const roles = await rbacService.getOrganizationRoles(req.user.orgId);
     res.json({ roles });
