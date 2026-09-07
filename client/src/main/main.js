@@ -433,10 +433,40 @@ ipcMain.handle('get-organization-users', async (_event, token) => {
   }
 });
 
-ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipientPublicKey, accessLevel, token, reauthPassword }) => {
+ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipientPublicKey, accessLevel, blockedOperations, token, reauthPassword }) => {
   try {
     if (!localPrivateKeyPem) {
       throw new Error('Local cryptographic identity private key is missing.');
+    }
+
+    let targetPublicKey = recipientPublicKey;
+
+    if (!targetPublicKey) {
+      // Fallback: Query backend for recipient's public key from user_keys
+      try {
+        const permRes = await fetch(`http://localhost:5000/api/users/${recipientUserId}/permissions`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'X-Client-Device-ID': getDeviceId(),
+            'X-Client-Platform': getDevicePlatform(),
+          },
+        });
+        if (permRes.ok) {
+          const permData = await permRes.json();
+          if (permData.publicKey) {
+            targetPublicKey = permData.publicKey;
+          }
+        }
+      } catch (e) {
+        console.warn('[Share File] Could not fetch recipient public key fallback:', e.message);
+      }
+    }
+
+    if (!targetPublicKey) {
+      return {
+        success: false,
+        error: 'Recipient does not have a registered cryptographic public key in user_keys.',
+      };
     }
 
     let dek = fileCrypto.getDek(fileId);
@@ -487,7 +517,7 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
     const wrappingPayload = keyWrapping.wrapDek(
       dek,
       localPrivateKeyPem,
-      recipientPublicKey,
+      targetPublicKey,
       fileId,
       recipientUserId
     );
@@ -511,6 +541,7 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
         wrapIv: wrappingPayload.wrapIv,
         wrapAuthTag: wrappingPayload.wrapAuthTag,
         accessLevel: accessLevel || 'READ',
+        blockedOperations: Array.isArray(blockedOperations) ? blockedOperations : [],
       }),
     });
 

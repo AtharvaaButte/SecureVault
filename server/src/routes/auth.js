@@ -44,18 +44,18 @@ router.post('/register', async (req, res) => {
     );
     const org = orgResult.rows[0];
 
-    // Create initial Owner role for org
-    const ownerRoleId = await rbacService.createInitialOrgRole(client, org.id, 'Owner', 'Organization Owner with full capabilities');
-
-    // Create initial user (without legacy role column)
+    // Create initial user as Organization Owner (is_owner = true, no custom role)
     const userResult = await client.query(
-      'INSERT INTO users (organization_id, email, password_hash) VALUES ($1, $2, $3) RETURNING id, email, created_at',
+      'INSERT INTO users (organization_id, email, password_hash, is_owner) VALUES ($1, $2, $3, true) RETURNING id, email, is_owner, created_at',
       [org.id, normalizedEmail, passwordHash]
     );
     const user = userResult.rows[0];
 
-    // Assign Owner role to initial user
-    await rbacService.assignRoleToUser(client, user.id, ownerRoleId);
+    // Link owner_id in organizations table
+    await client.query(
+      'UPDATE organizations SET owner_id = $1 WHERE id = $2',
+      [user.id, org.id]
+    );
 
     // Register initial location context in user_devices
     await client.query(
@@ -86,6 +86,7 @@ router.post('/register', async (req, res) => {
       userId: user.id,
       orgId: org.id,
       email: user.email,
+      isOwner: true,
     });
 
     res.status(201).json({
@@ -94,6 +95,7 @@ router.post('/register', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
+        isOwner: true,
         roles: userRoles,
         permissions: userPermissions,
         createdAt: user.created_at,
@@ -101,6 +103,7 @@ router.post('/register', async (req, res) => {
       organization: {
         id: org.id,
         name: org.name,
+        ownerId: user.id,
         createdAt: org.created_at,
       },
     });
@@ -126,7 +129,7 @@ router.post('/login', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT u.id, u.email, u.password_hash, u.created_at, 
+      `SELECT u.id, u.email, u.password_hash, u.is_owner, u.created_at, 
               o.id as organization_id, o.name as organization_name 
        FROM users u 
        JOIN organizations o ON u.organization_id = o.id 
@@ -185,6 +188,7 @@ router.post('/login', async (req, res) => {
       userId: user.id,
       orgId: user.organization_id,
       email: user.email,
+      isOwner: Boolean(user.is_owner),
     });
 
     res.json({
@@ -193,6 +197,7 @@ router.post('/login', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
+        isOwner: Boolean(user.is_owner),
         roles: userRoles,
         permissions: userPermissions,
         createdAt: user.created_at,
@@ -212,7 +217,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.email, u.created_at, 
+      `SELECT u.id, u.email, u.is_owner, u.created_at, 
               o.id as organization_id, o.name as organization_name 
        FROM users u 
        JOIN organizations o ON u.organization_id = o.id 
@@ -232,6 +237,7 @@ router.get('/me', verifyToken, async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
+        isOwner: Boolean(user.is_owner),
         roles: userRoles,
         permissions: userPermissions,
         createdAt: user.created_at,

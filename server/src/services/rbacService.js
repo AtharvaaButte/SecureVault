@@ -6,46 +6,28 @@ const { pool } = require('../db');
  * Role auditability: created_by recorded on custom roles.
  */
 
+/**
+ * Check if a user is the Organization Owner.
+ */
+async function isOwner(userId) {
+  if (!userId) return false;
+  const res = await pool.query('SELECT is_owner FROM users WHERE id = $1', [userId]);
+  return res.rows.length > 0 && Boolean(res.rows[0].is_owner);
+}
+
+/**
+ * Legacy initial role creation helper (Deprecated - Owner is a special account, not a custom role).
+ */
 async function createInitialOrgRole(clientOrPool, orgId, roleName = 'Owner', description = 'Organization Owner with full capabilities', creatorUserId = null) {
-  const executor = clientOrPool || pool;
-
-  const permRes = await executor.query('SELECT id, name FROM permissions');
-  const permMap = {};
-  permRes.rows.forEach(p => {
-    permMap[p.name] = p.id;
-  });
-
-  const roleRes = await executor.query(
-    `INSERT INTO roles (organization_id, name, description, created_by)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (organization_id, name) DO UPDATE SET description = EXCLUDED.description
-     RETURNING id`,
-    [orgId, roleName, description, creatorUserId]
-  );
-  const roleId = roleRes.rows[0].id;
-
-  // Map all standard system permissions to initial role
-  const allPermNames = [
-    'USER_CREATE', 'USER_MANAGE', 'ROLE_MANAGE', 'ORG_MANAGE',
-    'FILE_READ', 'FILE_UPLOAD', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'
-  ];
-
-  for (const name of allPermNames) {
-    if (permMap[name]) {
-      await executor.query(
-        `INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [roleId, permMap[name]]
-      );
-    }
-  }
-
-  return roleId;
+  // No-op for backwards compatibility during migration/tests
+  return null;
 }
 
 /**
  * Assign a single role to a user.
  */
 async function assignRoleToUser(clientOrPool, userId, roleId) {
+  if (!roleId) return;
   const executor = clientOrPool || pool;
   await executor.query(
     `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
@@ -57,6 +39,10 @@ async function assignRoleToUser(clientOrPool, userId, roleId) {
  * Assign multiple roles to a user within an organization.
  */
 async function assignUserRoles(orgId, userId, roleIds) {
+  if (await isOwner(userId)) {
+    throw new Error('Role assignments cannot be modified for the Organization Owner.');
+  }
+
   if (!Array.isArray(roleIds) || roleIds.length === 0) {
     throw new Error('At least one valid role ID must be assigned to the user.');
   }
@@ -93,8 +79,14 @@ async function assignUserRoles(orgId, userId, roleIds) {
 
 /**
  * Retrieve a list of distinct permission names assigned to a user via their roles.
+ * Organization Owners inherently possess all standard system permissions.
  */
 async function getUserPermissions(userId) {
+  if (await isOwner(userId)) {
+    const allPerms = await getAllPermissions();
+    return allPerms.map(p => p.name);
+  }
+
   const result = await pool.query(
     `SELECT DISTINCT p.name
      FROM permissions p
@@ -108,8 +100,13 @@ async function getUserPermissions(userId) {
 
 /**
  * Get assigned roles for a user.
+ * Organization Owners do not have custom organization roles assigned.
  */
 async function getUserRoles(userId) {
+  if (await isOwner(userId)) {
+    return [];
+  }
+
   const result = await pool.query(
     `SELECT r.id, r.name, r.description, r.created_by
      FROM roles r
@@ -124,6 +121,9 @@ async function getUserRoles(userId) {
  * Check if a user has a specific permission.
  */
 async function hasPermission(userId, permissionName) {
+  if (await isOwner(userId)) {
+    return true;
+  }
   const permissions = await getUserPermissions(userId);
   return permissions.includes(permissionName);
 }
@@ -178,6 +178,7 @@ async function getOrganizationRoles(orgId) {
 
 /**
  * Create a new custom role within an organization (Role auditability: created_by).
+ * Reserved role name "Owner" cannot be created as a custom role.
  */
 async function createCustomRole(orgId, name, description, permissionNames = [], creatorUserId = null) {
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -185,6 +186,10 @@ async function createCustomRole(orgId, name, description, permissionNames = [], 
   }
 
   const normalizedName = name.trim();
+
+  if (normalizedName.toLowerCase() === 'owner') {
+    throw new Error('"Owner" is a reserved name and cannot be created as a custom organization role.');
+  }
 
   const existing = await pool.query(
     'SELECT id FROM roles WHERE organization_id = $1 AND LOWER(name) = LOWER($2)',
@@ -304,6 +309,7 @@ async function getPermissionAuditRecords(orgId) {
 }
 
 module.exports = {
+  isOwner,
   createInitialOrgRole,
   assignRoleToUser,
   assignUserRoles,

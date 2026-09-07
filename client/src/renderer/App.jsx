@@ -32,6 +32,7 @@ export default function App() {
   const [orgMembers, setOrgMembers] = useState([]);
   const [shareRecipients, setShareRecipients] = useState({});
   const [shareAccessLevels, setShareAccessLevels] = useState({});
+  const [shareBlockedOps, setShareBlockedOps] = useState({});
   const [shareStatus, setShareStatus] = useState({});
   const [sharedDownloadStatus, setSharedDownloadStatus] = useState({});
   const [fileShares, setFileShares] = useState({});
@@ -519,6 +520,29 @@ export default function App() {
     }
   };
 
+  const handleDeleteUser = async (userId, userEmail) => {
+    if (!window.confirm(`Are you sure you want to delete member account "${userEmail}"?`)) return;
+    setLoading(true);
+    setError(null);
+    setSuccessMsg(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/users/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      const data = await parseJsonResponse(res, 'Failed to delete member account');
+      setSuccessMsg(data.message || `Member account "${userEmail}" deleted.`);
+      await fetchOrgMembers(token);
+      await fetchAuditLogs(token);
+    } catch (err) {
+      setError(`[Delete Member Error]: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Role Management Actions (Requirement 3)
   const handleCreateCustomRole = async (e) => {
     e.preventDefault();
@@ -802,12 +826,13 @@ export default function App() {
 
   const handleShareFile = async (fileId, reauthPwd = null) => {
     const recipient = shareRecipients[fileId];
-    if (!recipient || !recipient.id || !recipient.publicKeyRegistered) {
-      setError('Please select a valid recipient from your organization with a registered public key.');
+    if (!recipient || !recipient.id) {
+      setError('Please select a valid recipient from your organization.');
       return;
     }
 
-    const accessLevel = shareAccessLevels[fileId] || 'READ';
+    const blockedOps = shareBlockedOps[fileId] || [];
+    const recipientPubKey = recipient.publicKey || userPermissionsCache[recipient.id]?.publicKey || null;
 
     setShareStatus((prev) => ({ ...prev, [fileId]: { loading: true, error: null } }));
     setError(null);
@@ -816,8 +841,9 @@ export default function App() {
       const res = await window.electronAPI.shareFile({
         fileId,
         recipientUserId: recipient.id,
-        recipientPublicKey: recipient.publicKeyRegistered ? recipient.publicKey : null,
-        accessLevel,
+        recipientPublicKey: recipientPubKey,
+        accessLevel: blockedOps.length > 0 ? 'READ' : 'FULL',
+        blockedOperations: blockedOps,
         token,
         reauthPassword: reauthPwd,
       });
@@ -827,7 +853,8 @@ export default function App() {
           ...prev,
           [fileId]: { loading: false, success: true, message: res.message },
         }));
-        setSuccessMsg(`File shared successfully with ${recipient.email} (${accessLevel} access level)!`);
+        const statusDetail = blockedOps.length > 0 ? `Restricted Operations: ${blockedOps.join(', ')}` : 'Full Access';
+        setSuccessMsg(`File shared successfully with ${recipient.email} (${statusDetail})!`);
         await fetchFileShares(fileId, token);
         await fetchAuditLogs(token);
       } else {
@@ -1301,56 +1328,66 @@ export default function App() {
                           <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#38bdf8', marginBottom: '8px' }}>🤝 Share File with Organization User</div>
                           
                           {/* Step 1: Select Organization User */}
-                          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                          <div style={{ marginBottom: '10px' }}>
+                            <label style={{ display: 'block', fontSize: '11px', color: '#cbd5e1', marginBottom: '4px' }}>Select Recipient User:</label>
                             <select
                               onChange={(e) => handleRecipientSelected(f.id, e.target.value)}
-                              style={{ flex: 1, padding: '6px', borderRadius: '4px', backgroundColor: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
+                              style={{ width: '100%', padding: '6px', borderRadius: '4px', backgroundColor: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
                             >
                               <option value="">Select Recipient User...</option>
                               {orgMembers.filter((u) => u.id !== currentUser.id).map((u) => (
                                 <option key={u.id} value={u.id}>{u.email} {u.publicKeyRegistered ? '(Crypto Identity Ready)' : '(No Crypto Key)'}</option>
                               ))}
                             </select>
-
-                            <select
-                              value={shareAccessLevels[f.id] || 'READ'}
-                              onChange={(e) => setShareAccessLevels((prev) => ({ ...prev, [f.id]: e.target.value }))}
-                              style={{ width: '130px', padding: '6px', borderRadius: '4px', backgroundColor: '#0f172a', color: '#fff', border: '1px solid #475569', fontSize: '12px' }}
-                            >
-                              <option value="READ">READ ONLY</option>
-                              <option value="FULL">FULL ACCESS</option>
-                            </select>
                           </div>
 
-                          {/* Step 2: Display Selected User's Organization Permissions */}
+                          {/* Step 2: Display Selected User's Roles & Effective Organization Permissions */}
                           {recipient && (
                             <div style={{ backgroundColor: '#0f172a', padding: '10px', borderRadius: '6px', fontSize: '11px', marginBottom: '10px', border: '1px solid #334155' }}>
                               <div style={{ color: '#cbd5e1', fontWeight: 'bold', marginBottom: '4px' }}>
                                 Selected User: <span>{recipient.email}</span>
                               </div>
-                              <div style={{ marginBottom: '4px' }}>
+                              <div style={{ marginBottom: '6px' }}>
                                 <strong>Assigned Roles:</strong> {recipient.roles && recipient.roles.length > 0 ? recipient.roles.map((r) => typeof r === 'string' ? r : (r.name || r.id)).join(', ') : 'None'}
                               </div>
-                              <div style={{ color: '#cbd5e1' }}>
+                              <div style={{ color: '#cbd5e1', marginBottom: '8px' }}>
                                 <strong>Effective Organization Permissions:</strong>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginTop: '4px' }}>
-                                  <div>{(recipientInfo?.permissions || recipient.permissions || []).includes('FILE_READ') ? '✓ FILE_READ' : '✗ FILE_READ'}</div>
-                                  <div>{(recipientInfo?.permissions || recipient.permissions || []).includes('FILE_SHARE') ? '✓ FILE_SHARE' : '✗ FILE_SHARE'}</div>
-                                  <div>{(recipientInfo?.permissions || recipient.permissions || []).includes('FILE_REVOKE') ? '✓ FILE_REVOKE' : '✗ FILE_REVOKE'}</div>
-                                  <div>{(recipientInfo?.permissions || recipient.permissions || []).includes('FILE_DELETE') ? '✓ FILE_DELETE' : '✗ FILE_DELETE'}</div>
+                                  <div style={{ color: (recipientInfo?.permissions || recipient.permissions || []).includes('FILE_READ') ? '#4ade80' : '#f87171' }}>{(recipientInfo?.permissions || recipient.permissions || []).includes('FILE_READ') ? '✓ FILE_READ' : '✗ FILE_READ'}</div>
+                                  <div style={{ color: (recipientInfo?.permissions || recipient.permissions || []).includes('FILE_SHARE') ? '#4ade80' : '#f87171' }}>{(recipientInfo?.permissions || recipient.permissions || []).includes('FILE_SHARE') ? '✓ FILE_SHARE' : '✗ FILE_SHARE'}</div>
+                                  <div style={{ color: (recipientInfo?.permissions || recipient.permissions || []).includes('FILE_REVOKE') ? '#4ade80' : '#f87171' }}>{(recipientInfo?.permissions || recipient.permissions || []).includes('FILE_REVOKE') ? '✓ FILE_REVOKE' : '✗ FILE_REVOKE'}</div>
+                                  <div style={{ color: (recipientInfo?.permissions || recipient.permissions || []).includes('FILE_DELETE') ? '#4ade80' : '#f87171' }}>{(recipientInfo?.permissions || recipient.permissions || []).includes('FILE_DELETE') ? '✓ FILE_DELETE' : '✗ FILE_DELETE'}</div>
+                                </div>
+                              </div>
+
+                              {/* Step 3: Configure File-Specific Restrictions from System Permissions Catalog */}
+                              <div style={{ backgroundColor: '#1e293b', padding: '8px', borderRadius: '4px', border: '1px solid #334155' }}>
+                                <strong style={{ color: '#f8fafc', display: 'block', marginBottom: '6px' }}>🚫 File-Specific Permission Restrictions (Block Operations):</strong>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                  {['FILE_READ', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'].map((permOp) => {
+                                    const currentBlocked = shareBlockedOps[f.id] || [];
+                                    const isBlocked = currentBlocked.includes(permOp);
+                                    return (
+                                      <label key={permOp} style={{ fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', color: isBlocked ? '#ef4444' : '#cbd5e1' }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={isBlocked}
+                                          onChange={(e) => {
+                                            const updated = e.target.checked
+                                              ? [...currentBlocked, permOp]
+                                              : currentBlocked.filter((op) => op !== permOp);
+                                            setShareBlockedOps((prev) => ({ ...prev, [f.id]: updated }));
+                                          }}
+                                          style={{ marginRight: '4px' }}
+                                        />
+                                        Block {permOp}
+                                      </label>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             </div>
                           )}
-
-                          {/* Step 3: Explanation of File-Specific Restrictions */}
-                          <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '10px' }}>
-                            {shareAccessLevels[f.id] === 'READ' ? (
-                              <span>🔒 <strong>File Restriction Applied:</strong> Recipient can read/download, but will be explicitly restricted from re-sharing, revoking, or deleting this specific file (even if their role has those general permissions).</span>
-                            ) : (
-                              <span>⚡ <strong>Full Control Access:</strong> Recipient can re-share or manage this file if permitted by their role permissions.</span>
-                            )}
-                          </div>
 
                           <button onClick={() => handleShareFile(f.id)} style={{ width: '100%', padding: '8px', backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>
                             Share File with {recipient ? recipient.email : 'Selected User'}
@@ -1364,7 +1401,9 @@ export default function App() {
                           <strong style={{ color: '#94a3b8' }}>Currently Shared With:</strong>
                           {fileShares[f.id].map((s) => (
                             <div key={s.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                              <span>{s.email} ({s.accessLevel || 'READ'} access)</span>
+                              <span>
+                                {s.email} {s.blockedOperations && s.blockedOperations.length > 0 ? `(Blocked: ${s.blockedOperations.join(', ')})` : '(Full Access)'}
+                              </span>
                               {userPermissions.includes('FILE_REVOKE') && (
                                 <button onClick={() => handleRevokeShare(f.id, s.userId)} style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '11px' }}>Revoke</button>
                               )}
@@ -1486,15 +1525,23 @@ export default function App() {
                   </td>
                   <td style={{ padding: '10px' }}>
                     {userPermissions.includes('USER_MANAGE') && (
-                      <button
-                        onClick={() => {
-                          setEditingUser(u);
-                          setEditUserRoleIds((u.roles || []).map((r) => typeof r === 'string' ? r : r.id));
-                        }}
-                        style={{ padding: '4px 10px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
-                      >
-                        Edit Roles
-                      </button>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          onClick={() => {
+                            setEditingUser(u);
+                            setEditUserRoleIds((u.roles || []).map((r) => typeof r === 'string' ? r : r.id));
+                          }}
+                          style={{ padding: '4px 10px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
+                        >
+                          Edit Roles
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(u.id, u.email)}
+                          style={{ padding: '4px 10px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>

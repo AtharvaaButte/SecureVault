@@ -32,6 +32,7 @@ function verifyToken(req, res, next) {
       userId: String(decoded.userId),
       orgId: String(decoded.orgId),
       email: String(decoded.email || ''),
+      isOwner: Boolean(decoded.isOwner),
     };
 
     // Fail-safe: Prevent client-side body tampering from overriding verified server-side identity

@@ -34,19 +34,41 @@ async function initDb() {
       CREATE TABLE IF NOT EXISTS organizations (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name VARCHAR(255) NOT NULL,
+        owner_id UUID,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
+    await pool.query('ALTER TABLE organizations ADD COLUMN IF NOT EXISTS owner_id UUID;');
 
-    // 2. Users Table (No legacy role or public_key columns)
+    // 2. Users Table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
         email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
+        is_owner BOOLEAN NOT NULL DEFAULT false,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_owner BOOLEAN NOT NULL DEFAULT false;');
+
+    // Add Foreign Key Constraint from organizations.owner_id to users.id safely
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'fk_organizations_owner'
+        ) THEN
+          ALTER TABLE organizations 
+          ADD CONSTRAINT fk_organizations_owner 
+          FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_users_org_owner ON users(organization_id, is_owner);
     `);
 
     // 3. User Keys Table (Cryptographic Identity - X25519)

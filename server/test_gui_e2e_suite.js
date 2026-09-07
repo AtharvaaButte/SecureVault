@@ -100,11 +100,19 @@ async function runGuiE2eTestSuite() {
   const adminReg = await request('POST', '/api/auth/register', { orgName, email: adminEmail, password: 'AdminPassword2026!' }, { 'X-Client-Device-ID': 'admin-device' });
   const adminToken = adminReg.data.token;
 
-  // Admin creates Alice & Bob
-  const aliceCreate = await request('POST', '/api/users', { email: aliceEmail, password: 'AlicePassword2026!', role: 'USER' }, { 'Authorization': `Bearer ${adminToken}`, 'X-Client-Device-ID': 'admin-device' });
+  // Admin creates custom role "StandardMember" with file permissions
+  const roleRes = await request('POST', '/api/roles', {
+    name: 'StandardMember',
+    description: 'Standard member role with file permissions',
+    permissions: ['FILE_READ', 'FILE_UPLOAD', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'],
+  }, { 'Authorization': `Bearer ${adminToken}` });
+  const memberRoleId = roleRes.data.role.id;
+
+  // Admin creates Alice & Bob with assigned custom role
+  const aliceCreate = await request('POST', '/api/users', { email: aliceEmail, password: 'AlicePassword2026!', roleIds: [memberRoleId] }, { 'Authorization': `Bearer ${adminToken}`, 'X-Client-Device-ID': 'admin-device' });
   const aliceId = aliceCreate.data.user.id;
 
-  const bobCreate = await request('POST', '/api/users', { email: bobEmail, password: 'BobPassword2026!', role: 'USER' }, { 'Authorization': `Bearer ${adminToken}`, 'X-Client-Device-ID': 'admin-device' });
+  const bobCreate = await request('POST', '/api/users', { email: bobEmail, password: 'BobPassword2026!', roleIds: [memberRoleId] }, { 'Authorization': `Bearer ${adminToken}`, 'X-Client-Device-ID': 'admin-device' });
   const bobId = bobCreate.data.user.id;
 
   // Alice & Bob Login and Register Crypto Identity Public Keys
@@ -200,6 +208,7 @@ async function runGuiE2eTestSuite() {
     wrapAuthTag: bobWrap.wrapAuthTag,
   }, { 'Authorization': `Bearer ${aliceToken}`, 'X-Client-Device-ID': 'alice-electron-profile' });
 
+  console.log('shareNoPwd response:', JSON.stringify(shareNoPwd, null, 2));
   if (shareNoPwd.status !== 403 || !shareNoPwd.data.stepUpRequired) {
     throw new Error('FAIL: Expected SENSITIVE file share to trigger stepUpRequired modal');
   }

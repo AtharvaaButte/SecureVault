@@ -7,16 +7,17 @@ const rbacService = require('../services/rbacService');
 
 const router = express.Router();
 
-// GET /api/users/members - List organization members with assigned roles, effective permissions & user_keys status
+// GET /api/users/members - List non-owner organization members for member management, role assignment & file sharing
 router.get('/members', verifyToken, async (req, res) => {
   try {
     const orgId = req.user.orgId;
 
+    // 1. Fetch non-owner organization members
     const result = await pool.query(
       `SELECT u.id, u.email, u.created_at, uk.public_key
        FROM users u
        LEFT JOIN user_keys uk ON u.id = uk.user_id
-       WHERE u.organization_id = $1
+       WHERE u.organization_id = $1 AND u.is_owner = false
        ORDER BY u.created_at ASC`,
       [orgId]
     );
@@ -29,6 +30,7 @@ router.get('/members', verifyToken, async (req, res) => {
       users.push({
         id: u.id,
         email: u.email,
+        publicKey: u.public_key || null,
         publicKeyRegistered: Boolean(u.public_key),
         roles,
         permissions,
@@ -36,21 +38,42 @@ router.get('/members', verifyToken, async (req, res) => {
       });
     }
 
-    res.json({ users });
+    // 2. Fetch Organization Owner metadata
+    const ownerRes = await pool.query(
+      `SELECT u.id, u.email, u.created_at, uk.public_key
+       FROM users u
+       LEFT JOIN user_keys uk ON u.id = uk.user_id
+       WHERE u.organization_id = $1 AND u.is_owner = true`,
+      [orgId]
+    );
+
+    const owner = ownerRes.rows.length > 0 ? {
+      id: ownerRes.rows[0].id,
+      email: ownerRes.rows[0].email,
+      publicKey: ownerRes.rows[0].public_key || null,
+      publicKeyRegistered: Boolean(ownerRes.rows[0].public_key),
+      isOwner: true,
+      createdAt: ownerRes.rows[0].created_at,
+    } : null;
+
+    res.json({ users, owner });
   } catch (error) {
     console.error('[Get Members Error]:', error.message);
     res.status(500).json({ message: 'Failed to retrieve organization members.' });
   }
 });
 
-// GET /api/users/:id/permissions - Query effective roles & permissions for a specific user (Item 7)
+// GET /api/users/:id/permissions - Query effective roles & permissions for a specific user
 router.get('/:id/permissions', verifyToken, async (req, res) => {
   try {
     const targetUserId = req.params.id;
     const orgId = req.user.orgId;
 
     const userCheck = await pool.query(
-      'SELECT id, email, organization_id FROM users WHERE id = $1 AND organization_id = $2',
+      `SELECT u.id, u.email, u.is_owner, u.organization_id, uk.public_key 
+       FROM users u
+       LEFT JOIN user_keys uk ON u.id = uk.user_id
+       WHERE u.id = $1 AND u.organization_id = $2`,
       [targetUserId, orgId]
     );
 
@@ -58,12 +81,16 @@ router.get('/:id/permissions', verifyToken, async (req, res) => {
       return res.status(404).json({ message: 'User not found in this organization.' });
     }
 
+    const targetUser = userCheck.rows[0];
     const roles = await rbacService.getUserRoles(targetUserId);
     const permissions = await rbacService.getUserPermissions(targetUserId);
 
     res.json({
       userId: targetUserId,
-      email: userCheck.rows[0].email,
+      email: targetUser.email,
+      isOwner: Boolean(targetUser.is_owner),
+      publicKey: targetUser.public_key || null,
+      publicKeyRegistered: Boolean(targetUser.public_key),
       roles,
       permissions,
     });
@@ -73,7 +100,7 @@ router.get('/:id/permissions', verifyToken, async (req, res) => {
   }
 });
 
-// POST /api/users - Create new organization user account (Requires USER_CREATE)
+// POST /api/users - Create new organization member account (Requires USER_CREATE)
 router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res) => {
   try {
     const { email, password, roleIds, roleId } = req.body;
@@ -98,7 +125,7 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
       await client.query('BEGIN');
 
       const userRes = await client.query(
-        'INSERT INTO users (organization_id, email, password_hash) VALUES ($1, $2, $3) RETURNING id, email, created_at',
+        'INSERT INTO users (organization_id, email, password_hash, is_owner) VALUES ($1, $2, $3, false) RETURNING id, email, created_at',
         [orgId, normalizedEmail, passwordHash]
       );
       const newUser = userRes.rows[0];
@@ -135,6 +162,7 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
         user: {
           id: newUser.id,
           email: newUser.email,
+          isOwner: false,
           roles: assignedRoles,
           permissions: effectivePermissions,
           createdAt: newUser.created_at,
@@ -152,7 +180,7 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
   }
 });
 
-// PUT /api/users/:id/roles - Update role assignments for a user (Requires USER_MANAGE)
+// PUT /api/users/:id/roles - Update role assignments for a non-owner member (Requires USER_MANAGE)
 router.put('/:id/roles', verifyToken, requirePermission('USER_MANAGE'), async (req, res) => {
   try {
     const targetUserId = req.params.id;
@@ -163,12 +191,16 @@ router.put('/:id/roles', verifyToken, requirePermission('USER_MANAGE'), async (r
     }
 
     const userCheck = await pool.query(
-      'SELECT id FROM users WHERE id = $1 AND organization_id = $2',
+      'SELECT id, is_owner FROM users WHERE id = $1 AND organization_id = $2',
       [targetUserId, req.user.orgId]
     );
 
     if (userCheck.rows.length === 0) {
       return res.status(403).json({ message: 'Access denied. User does not belong to this organization.' });
+    }
+
+    if (userCheck.rows[0].is_owner) {
+      return res.status(403).json({ message: 'Role assignments cannot be modified for the Organization Owner.' });
     }
 
     await rbacService.assignUserRoles(req.user.orgId, targetUserId, roleIds);
@@ -184,6 +216,40 @@ router.put('/:id/roles', verifyToken, requirePermission('USER_MANAGE'), async (r
   } catch (error) {
     console.error('[Update User Roles Error]:', error.message);
     res.status(400).json({ message: error.message || 'Failed to update user roles.' });
+  }
+});
+
+// DELETE /api/users/:id - Delete a member account from organization (Requires USER_MANAGE)
+router.delete('/:id', verifyToken, requirePermission('USER_MANAGE'), async (req, res) => {
+  try {
+    const targetUserId = req.params.id;
+    const orgId = req.user.orgId;
+
+    const userCheck = await pool.query(
+      'SELECT id, email, is_owner FROM users WHERE id = $1 AND organization_id = $2',
+      [targetUserId, orgId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found in this organization.' });
+    }
+
+    const targetUser = userCheck.rows[0];
+
+    // Inviolable Rule: Owner cannot be deleted via member deletion
+    if (targetUser.is_owner) {
+      return res.status(403).json({ message: 'Organization Owner cannot be deleted through member deletion.' });
+    }
+
+    await pool.query('DELETE FROM users WHERE id = $1 AND organization_id = $2', [targetUserId, orgId]);
+
+    res.json({
+      message: `Member account (${targetUser.email}) deleted successfully.`,
+      userId: targetUserId,
+    });
+  } catch (error) {
+    console.error('[Delete Member Error]:', error.message);
+    res.status(400).json({ message: error.message || 'Failed to delete member account.' });
   }
 });
 

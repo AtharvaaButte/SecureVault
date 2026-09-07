@@ -206,12 +206,22 @@ router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, 
       [fileId, currentUserId]
     );
 
-    const shares = result.rows.map(row => ({
-      userId: row.user_id,
-      email: row.email,
-      accessLevel: row.access_level || 'READ',
-      createdAt: row.created_at,
-    }));
+    const shares = [];
+    for (const row of result.rows) {
+      const restRes = await pool.query(
+        'SELECT blocked_operation FROM file_restrictions WHERE file_id = $1 AND user_id = $2',
+        [fileId, row.user_id]
+      );
+      const blockedOperations = restRes.rows.map(r => r.blocked_operation);
+
+      shares.push({
+        userId: row.user_id,
+        email: row.email,
+        accessLevel: row.access_level || 'READ',
+        blockedOperations,
+        createdAt: row.created_at,
+      });
+    }
 
     res.json({ shares });
   } catch (error) {
@@ -224,17 +234,15 @@ router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, 
 router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, res) => {
   try {
     const fileId = req.params.id;
-    const { recipientUserId, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey, accessLevel } = req.body;
+    const { recipientUserId, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, senderPublicKey, accessLevel, blockedOperations } = req.body;
 
     if (!recipientUserId || !wrappedDek || !wrapSalt || !wrapIv || !wrapAuthTag || !senderPublicKey) {
       return res.status(400).json({ message: 'Missing required sharing fields.' });
     }
 
-    const normalizedAccessLevel = (accessLevel === 'FULL') ? 'FULL' : 'READ';
-
     // 1. Verify recipient exists and check organization boundary + fetch X25519 public_key from user_keys
     const recipientResult = await pool.query(
-      `SELECT u.id, u.email, u.organization_id, uk.public_key 
+      `SELECT u.id, u.email, u.is_owner, u.organization_id, uk.public_key 
        FROM users u
        LEFT JOIN user_keys uk ON u.id = uk.user_id
        WHERE u.id = $1`,
@@ -247,6 +255,11 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
 
     const recipient = recipientResult.rows[0];
 
+    // INVIOLABLE RULE: Exclude Organization Owner from being targeted as normal share recipient
+    if (recipient.is_owner) {
+      return res.status(400).json({ message: 'File sharing with the Organization Owner is not permitted because the Owner has inherent organizational access.' });
+    }
+
     // ORGANIZATION BOUNDARY CHECK
     if (recipient.organization_id !== req.user.orgId) {
       return res.status(403).json({ message: 'Access denied. Cross-organization file sharing is strictly prohibited.' });
@@ -256,7 +269,17 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
       return res.status(400).json({ message: 'Recipient does not have a registered cryptographic public key in user_keys.' });
     }
 
-    // 2. Upsert wrapped DEK into file_keys table
+    // 2. Process blockedOperations array from standard base permission catalog: ['FILE_READ', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE']
+    let targetBlockedOps = [];
+    if (Array.isArray(blockedOperations)) {
+      targetBlockedOps = blockedOperations;
+    } else if (accessLevel === 'READ') {
+      targetBlockedOps = ['FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'];
+    }
+
+    const computedAccessLevel = targetBlockedOps.length > 0 ? (accessLevel === 'FULL' ? 'FULL' : 'READ') : 'FULL';
+
+    // 3. Upsert wrapped DEK into file_keys table
     await pool.query(
       `INSERT INTO file_keys 
         (file_id, user_id, sender_public_key, wrapped_dek, wrap_salt, wrap_iv, wrap_auth_tag, access_level)
@@ -269,24 +292,18 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
          wrap_auth_tag = EXCLUDED.wrap_auth_tag,
          access_level = EXCLUDED.access_level,
          created_at = CURRENT_TIMESTAMP`,
-      [fileId, recipientUserId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, normalizedAccessLevel]
+      [fileId, recipientUserId, senderPublicKey, wrappedDek, wrapSalt, wrapIv, wrapAuthTag, computedAccessLevel]
     );
 
-    // 3. Update file_restrictions table (Item 3: File-level permission restrictions)
-    if (normalizedAccessLevel === 'READ') {
-      const blockedOps = ['FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE'];
-      for (const op of blockedOps) {
-        await pool.query(
-          `INSERT INTO file_restrictions (file_id, user_id, blocked_operation)
-           VALUES ($1, $2, $3)
-           ON CONFLICT DO NOTHING`,
-          [fileId, recipientUserId, op]
-        );
-      }
-    } else {
+    // 4. Update file_restrictions table (Per-file permission restrictions)
+    await pool.query('DELETE FROM file_restrictions WHERE file_id = $1 AND user_id = $2', [fileId, recipientUserId]);
+
+    for (const op of targetBlockedOps) {
       await pool.query(
-        `DELETE FROM file_restrictions WHERE file_id = $1 AND user_id = $2`,
-        [fileId, recipientUserId]
+        `INSERT INTO file_restrictions (file_id, user_id, blocked_operation)
+         VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [fileId, recipientUserId, op]
       );
     }
 
@@ -304,10 +321,10 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
     });
 
     res.status(201).json({
-      message: `File shared successfully with recipient (${normalizedAccessLevel} access level).`,
+      message: `File shared successfully with recipient (${computedAccessLevel} access level).`,
       fileId,
       recipientUserId,
-      accessLevel: normalizedAccessLevel,
+      accessLevel: computedAccessLevel,
     });
   } catch (error) {
     console.error('[File Sharing Error]:', error.message);

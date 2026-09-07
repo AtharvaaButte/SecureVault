@@ -47,6 +47,10 @@ router.post('/', verifyToken, requirePermission('ROLE_MANAGE'), async (req, res)
       return res.status(400).json({ message: 'Role name is required.' });
     }
 
+    if (name.trim().toLowerCase() === 'owner') {
+      return res.status(400).json({ message: '"Owner" is a reserved name and cannot be created as a custom organization role.' });
+    }
+
     const newRole = await rbacService.createCustomRole(
       req.user.orgId,
       name.trim(),
