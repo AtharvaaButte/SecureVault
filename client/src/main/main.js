@@ -433,6 +433,54 @@ ipcMain.handle('get-organization-users', async (_event, token) => {
   }
 });
 
+ipcMain.handle('search-organization-members', async (_event, { query, token }) => {
+  try {
+    const qStr = encodeURIComponent(query || '');
+    const response = await fetch(`http://localhost:5000/api/users/search?q=${qStr}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-Client-Device-ID': getDeviceId(),
+        'X-Client-Platform': getDevicePlatform(),
+      },
+    });
+    const data = await response.json();
+    if (!response.ok) return { success: false, error: data.message || 'Search failed', users: [] };
+    return { success: true, users: data.users || [] };
+  } catch (error) {
+    console.error('[Search Users IPC Error]:', error.message);
+    return { success: false, error: error.message, users: [] };
+  }
+});
+
+ipcMain.handle('delete-file', async (_event, { fileId, token, reauthPassword }) => {
+  try {
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'X-Client-Device-ID': getDeviceId(),
+      'X-Client-Platform': getDevicePlatform(),
+    };
+    if (reauthPassword) headers['X-Reauth-Password'] = reauthPassword;
+
+    const response = await fetch(`http://localhost:5000/api/files/${fileId}`, {
+      method: 'DELETE',
+      headers,
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return {
+        success: false,
+        error: data.message || 'Failed to delete file',
+        status: response.status,
+        stepUpRequired: Boolean(data.stepUpRequired),
+      };
+    }
+    return { success: true, message: data.message };
+  } catch (error) {
+    console.error('[Delete File IPC Error]:', error.message);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipientPublicKey, accessLevel, blockedOperations, token, reauthPassword }) => {
   try {
     if (!localPrivateKeyPem) {

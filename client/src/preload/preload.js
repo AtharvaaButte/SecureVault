@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Cycle 5 Cloud File Download & Local Decryption IPC (Phase 9D with reauthPassword)
   downloadDecryptFile: (payload) => ipcRenderer.invoke('download-decrypt-file', payload),
 
+  // File Management & Search IPC
+  deleteFile: (payload) => ipcRenderer.invoke('delete-file', payload),
+  searchOrganizationMembers: (payload) => ipcRenderer.invoke('search-organization-members', payload),
+
   // Cycle 6 & 7 & 9 E2EE File Sharing, Access Control & Risk-Based IPC
   getOrganizationUsers: (token) => ipcRenderer.invoke('get-organization-users', token),
   shareFile: (payload) => ipcRenderer.invoke('share-file', payload),

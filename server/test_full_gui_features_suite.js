@@ -143,7 +143,7 @@ async function runFullGuiFeaturesSuite() {
   const createBobRes = await request('POST', '/api/users', {
     email: userBobEmail,
     password: 'BobPassword2026!',
-    roleIds: [],
+    roleIds: [subManagerRoleId],
   }, { 'Authorization': `Bearer ${subMgrToken}` });
 
   if (createBobRes.status !== 201) throw new Error(`Non-owner user creation failed: ${JSON.stringify(createBobRes.data)}`);

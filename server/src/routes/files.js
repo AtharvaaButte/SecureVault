@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 const { requirePermission, requireFileAccess } = require('../middleware/authorize');
-const { uploadToB2, getFromB2 } = require('../storage/s3Client');
+const { uploadToB2, getFromB2, deleteFromB2 } = require('../storage/s3Client');
 const auditService = require('../services/auditService');
 const geoService = require('../services/geoService');
 
@@ -153,7 +153,7 @@ router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, r
     const result = await pool.query(
       `SELECT f.id, f.original_name, f.original_size, f.storage_key, f.encryption_algorithm, f.iv, f.auth_tag, f.data_classification, f.created_at,
               fk.sender_public_key, fk.wrapped_dek, fk.wrap_salt, fk.wrap_iv, fk.wrap_auth_tag, fk.access_level,
-              u.email AS owner_email
+              u.name AS owner_name, u.email AS owner_email
        FROM files f
        INNER JOIN file_keys fk ON f.id = fk.file_id
        INNER JOIN users u ON f.owner_id = u.id
@@ -162,27 +162,38 @@ router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, r
       [currentUserId]
     );
 
-    const sharedFiles = result.rows.map(row => ({
-      id: row.id,
-      originalName: row.original_name,
-      originalSize: parseInt(row.original_size, 10),
-      storageKey: row.storage_key,
-      algorithm: row.encryption_algorithm,
-      iv: row.iv,
-      authTag: row.auth_tag,
-      dataClassification: row.data_classification,
-      sensitivityLevel: row.data_classification,
-      accessLevel: row.access_level || 'READ',
-      createdAt: row.created_at,
-      ownerEmail: row.owner_email,
-      wrapping: {
-        senderPublicKey: row.sender_public_key,
-        wrappedDek: row.wrapped_dek,
-        wrapSalt: row.wrap_salt,
-        wrapIv: row.wrap_iv,
-        wrapAuthTag: row.wrap_auth_tag,
-      },
-    }));
+    const sharedFiles = [];
+    for (const row of result.rows) {
+      const restRes = await pool.query(
+        'SELECT blocked_operation FROM file_restrictions WHERE file_id = $1 AND user_id = $2',
+        [row.id, currentUserId]
+      );
+      const blockedOps = restRes.rows.map(r => r.blocked_operation);
+
+      sharedFiles.push({
+        id: row.id,
+        originalName: row.original_name,
+        originalSize: parseInt(row.original_size, 10),
+        storageKey: row.storage_key,
+        algorithm: row.encryption_algorithm,
+        iv: row.iv,
+        authTag: row.auth_tag,
+        dataClassification: row.data_classification,
+        sensitivityLevel: row.data_classification,
+        accessLevel: row.access_level || 'READ',
+        blockedOperations: blockedOps,
+        createdAt: row.created_at,
+        ownerName: row.owner_name,
+        ownerEmail: row.owner_email,
+        wrapping: {
+          senderPublicKey: row.sender_public_key,
+          wrappedDek: row.wrapped_dek,
+          wrapSalt: row.wrap_salt,
+          wrapIv: row.wrap_iv,
+          wrapAuthTag: row.wrap_auth_tag,
+        },
+      });
+    }
 
     res.json({ sharedFiles });
   } catch (error) {
@@ -198,7 +209,7 @@ router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, 
     const currentUserId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT fk.user_id, u.email, fk.access_level, fk.created_at
+      `SELECT fk.user_id, u.name, u.email, fk.access_level, fk.created_at
        FROM file_keys fk
        JOIN users u ON fk.user_id = u.id
        WHERE fk.file_id = $1 AND fk.user_id != $2
@@ -216,6 +227,7 @@ router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, 
 
       shares.push({
         userId: row.user_id,
+        name: row.name,
         email: row.email,
         accessLevel: row.access_level || 'READ',
         blockedOperations,
@@ -240,9 +252,9 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
       return res.status(400).json({ message: 'Missing required sharing fields.' });
     }
 
-    // 1. Verify recipient exists and check organization boundary + fetch X25519 public_key from user_keys
+    // 1. Verify recipient exists and check organization boundary + fetch status & X25519 public_key
     const recipientResult = await pool.query(
-      `SELECT u.id, u.email, u.is_owner, u.organization_id, uk.public_key 
+      `SELECT u.id, u.email, u.is_owner, u.status, u.is_active, u.organization_id, uk.public_key 
        FROM users u
        LEFT JOIN user_keys uk ON u.id = uk.user_id
        WHERE u.id = $1`,
@@ -265,8 +277,18 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
       return res.status(403).json({ message: 'Access denied. Cross-organization file sharing is strictly prohibited.' });
     }
 
+    if (recipient.status === 'SETUP_REQUIRED' || recipient.status === 'DISABLED') {
+      return res.status(400).json({ message: 'This user has not completed account setup yet.' });
+    }
+
     if (!recipient.public_key) {
-      return res.status(400).json({ message: 'Recipient does not have a registered cryptographic public key in user_keys.' });
+      const kp = crypto.generateKeyPairSync('x25519');
+      const pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
+      await pool.query(
+        `INSERT INTO user_keys (user_id, public_key, key_algorithm)
+         VALUES ($1, $2, 'X25519') ON CONFLICT DO NOTHING`,
+        [recipient.id, pubKey]
+      );
     }
 
     // 2. Process blockedOperations array from standard base permission catalog: ['FILE_READ', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE']
@@ -450,6 +472,45 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
   } catch (error) {
     console.error('[File Download Error]:', error.message);
     res.status(500).json({ message: 'Failed to download file ciphertext.' });
+  }
+});
+
+// DELETE /api/files/:id - Delete owned file from cloud storage & database (Requires FILE_DELETE & File Access Authorization)
+router.delete('/:id', verifyToken, requireFileAccess('DELETE'), async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const fileRecord = req.fileRecord;
+
+    // 1. Delete object from Backblaze B2 bucket
+    try {
+      await deleteFromB2(fileRecord.storage_key);
+    } catch (b2Err) {
+      console.warn('[B2 Delete Warning]:', b2Err.message);
+    }
+
+    // 2. Delete file record from PostgreSQL (Cascade deletes file_keys and file_restrictions)
+    await pool.query('DELETE FROM files WHERE id = $1', [fileId]);
+
+    // 3. Record Audit Event
+    const location = geoService.extractLocation(req);
+    await auditService.recordAuditEvent({
+      organizationId: req.user.orgId,
+      userId: req.user.userId,
+      eventType: 'DELETE',
+      action: 'ALLOW',
+      resourceType: 'FILE',
+      resourceId: fileId,
+      ipAddress: location.ip,
+      locationLabel: location.regionLabel,
+    });
+
+    res.json({
+      message: 'File deleted successfully from cloud storage and database.',
+      fileId,
+    });
+  } catch (error) {
+    console.error('[File Delete Error]:', error.message);
+    res.status(500).json({ message: 'Failed to delete file.' });
   }
 });
 

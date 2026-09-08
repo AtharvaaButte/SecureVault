@@ -38,22 +38,26 @@ async function initDb() {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    await pool.query('ALTER TABLE organizations ADD COLUMN IF NOT EXISTS owner_id UUID;');
 
     // 2. Users Table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL DEFAULT '',
         email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
+        password_hash VARCHAR(255),
         is_owner BOOLEAN NOT NULL DEFAULT false,
+        setup_token VARCHAR(255),
+        setup_token_expires TIMESTAMP WITH TIME ZONE,
+        status VARCHAR(50) NOT NULL DEFAULT 'SETUP_REQUIRED',
+        is_active BOOLEAN NOT NULL DEFAULT false,
+        security_hint TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
-    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_owner BOOLEAN NOT NULL DEFAULT false;');
 
-    // Add Foreign Key Constraint from organizations.owner_id to users.id safely
+    // Foreign Key Constraint from organizations.owner_id to users.id
     await pool.query(`
       DO $$
       BEGIN
@@ -69,6 +73,7 @@ async function initDb() {
 
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_users_org_owner ON users(organization_id, is_owner);
+      CREATE INDEX IF NOT EXISTS idx_users_setup_token ON users(setup_token);
     `);
 
     // 3. User Keys Table (Cryptographic Identity - X25519)
@@ -240,11 +245,13 @@ async function initDb() {
 
     // 15. Permission Audit View
     await pool.query(`
+      DROP VIEW IF EXISTS user_permission_audit_view CASCADE;
       CREATE OR REPLACE VIEW user_permission_audit_view AS
       SELECT 
         o.id AS organization_id,
         o.name AS organization_name,
         u.id AS user_id,
+        u.name AS user_name,
         u.email AS user_email,
         r.id AS role_id,
         r.name AS role_name,

@@ -138,7 +138,7 @@ async function runFinalRbacTestSuite() {
   const bobToken = bobLogin.data.token;
   await request('POST', '/api/crypto/public-key', { publicKey: bobPubPem }, { 'Authorization': `Bearer ${bobToken}` });
 
-  const carolCreate = await request('POST', '/api/users', { email: carolEmail, password: 'CarolPassword2026!' }, { 'Authorization': `Bearer ${aliceToken}` });
+  const carolCreate = await request('POST', '/api/users', { email: carolEmail, password: 'CarolPassword2026!', roleIds: [subManagerRoleId] }, { 'Authorization': `Bearer ${aliceToken}` });
   const carolId = carolCreate.data.user.id;
   const carolLogin = await request('POST', '/api/auth/login', { email: carolEmail, password: 'CarolPassword2026!' });
   const carolToken = carolLogin.data.token;

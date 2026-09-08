@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -73,9 +73,25 @@ async function getFromB2(storageKey) {
   }
 }
 
+/**
+ * Deletes ciphertext object from Backblaze B2 bucket (or fallback local mock).
+ */
+async function deleteFromB2(storageKey) {
+  if (s3Client) {
+    const command = new DeleteObjectCommand({
+      Bucket: bucketName,
+      Key: storageKey,
+    });
+    await s3Client.send(command);
+  } else {
+    mockB2Bucket.delete(storageKey);
+  }
+}
+
 module.exports = {
   s3Client,
   bucketName,
   uploadToB2,
   getFromB2,
+  deleteFromB2,
 };

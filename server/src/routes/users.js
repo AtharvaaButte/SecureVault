@@ -1,5 +1,6 @@
 const express = require('express');
 const argon2 = require('argon2');
+const crypto = require('crypto');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/authorize');
@@ -14,7 +15,7 @@ router.get('/members', verifyToken, async (req, res) => {
 
     // 1. Fetch non-owner organization members
     const result = await pool.query(
-      `SELECT u.id, u.email, u.created_at, uk.public_key
+      `SELECT u.id, u.name, u.email, u.status, u.is_active, u.setup_token, u.created_at, uk.public_key
        FROM users u
        LEFT JOIN user_keys uk ON u.id = uk.user_id
        WHERE u.organization_id = $1 AND u.is_owner = false
@@ -27,11 +28,26 @@ router.get('/members', verifyToken, async (req, res) => {
       const roles = await rbacService.getUserRoles(u.id);
       const permissions = await rbacService.getUserPermissions(u.id);
 
+      let pubKey = u.public_key;
+      if (!pubKey) {
+        const kp = crypto.generateKeyPairSync('x25519');
+        pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
+        await pool.query(
+          `INSERT INTO user_keys (user_id, public_key, key_algorithm)
+           VALUES ($1, $2, 'X25519') ON CONFLICT (user_id) DO NOTHING`,
+          [u.id, pubKey]
+        );
+      }
+
       users.push({
         id: u.id,
+        name: u.name,
         email: u.email,
-        publicKey: u.public_key || null,
-        publicKeyRegistered: Boolean(u.public_key),
+        status: u.status || (u.is_active ? 'ACTIVE' : 'SETUP_REQUIRED'),
+        isActive: Boolean(u.is_active),
+        setupToken: u.setup_token || null,
+        publicKey: pubKey,
+        publicKeyRegistered: true,
         roles,
         permissions,
         createdAt: u.created_at,
@@ -40,7 +56,7 @@ router.get('/members', verifyToken, async (req, res) => {
 
     // 2. Fetch Organization Owner metadata
     const ownerRes = await pool.query(
-      `SELECT u.id, u.email, u.created_at, uk.public_key
+      `SELECT u.id, u.name, u.email, u.created_at, uk.public_key
        FROM users u
        LEFT JOIN user_keys uk ON u.id = uk.user_id
        WHERE u.organization_id = $1 AND u.is_owner = true`,
@@ -49,6 +65,7 @@ router.get('/members', verifyToken, async (req, res) => {
 
     const owner = ownerRes.rows.length > 0 ? {
       id: ownerRes.rows[0].id,
+      name: ownerRes.rows[0].name,
       email: ownerRes.rows[0].email,
       publicKey: ownerRes.rows[0].public_key || null,
       publicKeyRegistered: Boolean(ownerRes.rows[0].public_key),
@@ -63,6 +80,57 @@ router.get('/members', verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/users/search?q=query - Search for recipients by name or email
+router.get('/search', verifyToken, async (req, res) => {
+  try {
+    const orgId = req.user.orgId;
+    const queryStr = req.query.q ? String(req.query.q).trim().toLowerCase() : '';
+
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.email, u.created_at, uk.public_key
+       FROM users u
+       LEFT JOIN user_keys uk ON u.id = uk.user_id
+       WHERE u.organization_id = $1 
+         AND u.is_owner = false 
+         AND ($2 = '' OR LOWER(u.name) LIKE $3 OR LOWER(u.email) LIKE $3)
+       ORDER BY u.name ASC, u.email ASC
+       LIMIT 20`,
+      [orgId, queryStr, `%${queryStr}%`]
+    );
+
+    const users = [];
+    for (const u of result.rows) {
+      const roles = await rbacService.getUserRoles(u.id);
+
+      let pubKey = u.public_key;
+      if (!pubKey) {
+        const kp = crypto.generateKeyPairSync('x25519');
+        pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
+        await pool.query(
+          `INSERT INTO user_keys (user_id, public_key, key_algorithm)
+           VALUES ($1, $2, 'X25519') ON CONFLICT (user_id) DO NOTHING`,
+          [u.id, pubKey]
+        );
+      }
+
+      users.push({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        publicKey: pubKey,
+        publicKeyRegistered: true,
+        roles,
+        createdAt: u.created_at,
+      });
+    }
+
+    res.json({ users });
+  } catch (error) {
+    console.error('[Search Members Error]:', error.message);
+    res.status(500).json({ message: 'Failed to search organization members.' });
+  }
+});
+
 // GET /api/users/:id/permissions - Query effective roles & permissions for a specific user
 router.get('/:id/permissions', verifyToken, async (req, res) => {
   try {
@@ -70,7 +138,7 @@ router.get('/:id/permissions', verifyToken, async (req, res) => {
     const orgId = req.user.orgId;
 
     const userCheck = await pool.query(
-      `SELECT u.id, u.email, u.is_owner, u.organization_id, uk.public_key 
+      `SELECT u.id, u.name, u.email, u.is_owner, u.organization_id, uk.public_key 
        FROM users u
        LEFT JOIN user_keys uk ON u.id = uk.user_id
        WHERE u.id = $1 AND u.organization_id = $2`,
@@ -85,12 +153,24 @@ router.get('/:id/permissions', verifyToken, async (req, res) => {
     const roles = await rbacService.getUserRoles(targetUserId);
     const permissions = await rbacService.getUserPermissions(targetUserId);
 
+    let pubKey = targetUser.public_key;
+    if (!pubKey) {
+      const kp = crypto.generateKeyPairSync('x25519');
+      pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
+      await pool.query(
+        `INSERT INTO user_keys (user_id, public_key, key_algorithm)
+         VALUES ($1, $2, 'X25519') ON CONFLICT (user_id) DO NOTHING`,
+        [targetUserId, pubKey]
+      );
+    }
+
     res.json({
       userId: targetUserId,
+      name: targetUser.name,
       email: targetUser.email,
       isOwner: Boolean(targetUser.is_owner),
-      publicKey: targetUser.public_key || null,
-      publicKeyRegistered: Boolean(targetUser.public_key),
+      publicKey: pubKey,
+      publicKeyRegistered: true,
       roles,
       permissions,
     });
@@ -103,13 +183,14 @@ router.get('/:id/permissions', verifyToken, async (req, res) => {
 // POST /api/users - Create new organization member account (Requires USER_CREATE)
 router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res) => {
   try {
-    const { email, password, roleIds, roleId } = req.body;
+    const { name, email, password, roleIds, roleId } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password are required.' });
+    if (!email) {
+      return res.status(400).json({ message: 'Email address is required.' });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    const userName = name && typeof name === 'string' && name.trim().length > 0 ? name.trim() : normalizedEmail.split('@')[0];
     const orgId = req.user.orgId;
 
     // Check if user already exists
@@ -118,39 +199,63 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
       return res.status(400).json({ message: 'A user with this email address already exists.' });
     }
 
-    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    let passwordHash = null;
+    let setupToken = null;
+    let setupTokenExpires = null;
+    let isActive = false;
+    let userStatus = 'SETUP_REQUIRED';
+
+    if (password && password.trim().length >= 6) {
+      passwordHash = await argon2.hash(password.trim(), { type: argon2.argon2id });
+      isActive = true;
+      userStatus = 'ACTIVE';
+    } else {
+      setupToken = crypto.randomUUID();
+      // Setup token expires in 7 days
+      setupTokenExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      isActive = false;
+      userStatus = 'SETUP_REQUIRED';
+    }
+
+    // Determine role IDs to assign (Mandatory role selection required)
+    let targetRoleIds = [];
+    if (Array.isArray(roleIds) && roleIds.length > 0) {
+      targetRoleIds = roleIds;
+    } else if (roleId && typeof roleId === 'string' && roleId.trim().length > 0) {
+      targetRoleIds = [roleId];
+    }
+
+    if (targetRoleIds.length === 0) {
+      return res.status(400).json({ message: 'Please select at least one role.' });
+    }
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       const userRes = await client.query(
-        'INSERT INTO users (organization_id, email, password_hash, is_owner) VALUES ($1, $2, $3, false) RETURNING id, email, created_at',
-        [orgId, normalizedEmail, passwordHash]
+        `INSERT INTO users (organization_id, name, email, password_hash, is_owner, setup_token, setup_token_expires, is_active, status) 
+         VALUES ($1, $2, $3, $4, false, $5, $6, $7, $8) 
+         RETURNING id, name, email, is_active, status, setup_token, created_at`,
+        [orgId, userName, normalizedEmail, passwordHash, setupToken, setupTokenExpires, isActive, userStatus]
       );
       const newUser = userRes.rows[0];
 
-      // Determine role IDs to assign
-      let targetRoleIds = [];
-      if (Array.isArray(roleIds) && roleIds.length > 0) {
-        targetRoleIds = roleIds;
-      } else if (roleId) {
-        targetRoleIds = [roleId];
-      } else {
-        const orgRoles = await rbacService.getOrganizationRoles(orgId);
-        if (orgRoles.length > 0) {
-          targetRoleIds = [orgRoles[0].id];
-        }
+      for (const rId of targetRoleIds) {
+        await client.query(
+          'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [newUser.id, rId]
+        );
       }
 
-      if (targetRoleIds.length > 0) {
-        for (const rId of targetRoleIds) {
-          await client.query(
-            'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-            [newUser.id, rId]
-          );
-        }
-      }
+      // Auto-provision X25519 key pair for newly created user
+      const kp = crypto.generateKeyPairSync('x25519');
+      const pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
+      await client.query(
+        `INSERT INTO user_keys (user_id, public_key, key_algorithm)
+         VALUES ($1, $2, 'X25519') ON CONFLICT DO NOTHING`,
+        [newUser.id, pubKey]
+      );
 
       await client.query('COMMIT');
 
@@ -158,10 +263,15 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
       const effectivePermissions = await rbacService.getUserPermissions(newUser.id);
 
       res.status(201).json({
-        message: 'User account created successfully.',
+        message: isActive ? 'User account created successfully.' : 'User account created with pending setup link.',
         user: {
           id: newUser.id,
+          name: newUser.name,
           email: newUser.email,
+          status: newUser.status || 'SETUP_REQUIRED',
+          isActive: Boolean(newUser.is_active),
+          setupToken: newUser.setup_token || null,
+          setupUrl: newUser.setup_token ? `/setup/${newUser.setup_token}` : null,
           isOwner: false,
           roles: assignedRoles,
           permissions: effectivePermissions,
@@ -226,7 +336,7 @@ router.delete('/:id', verifyToken, requirePermission('USER_MANAGE'), async (req,
     const orgId = req.user.orgId;
 
     const userCheck = await pool.query(
-      'SELECT id, email, is_owner FROM users WHERE id = $1 AND organization_id = $2',
+      'SELECT id, name, email, is_owner FROM users WHERE id = $1 AND organization_id = $2',
       [targetUserId, orgId]
     );
 
@@ -244,7 +354,7 @@ router.delete('/:id', verifyToken, requirePermission('USER_MANAGE'), async (req,
     await pool.query('DELETE FROM users WHERE id = $1 AND organization_id = $2', [targetUserId, orgId]);
 
     res.json({
-      message: `Member account (${targetUser.email}) deleted successfully.`,
+      message: `Member account (${targetUser.name || targetUser.email}) deleted successfully.`,
       userId: targetUserId,
     });
   } catch (error) {
