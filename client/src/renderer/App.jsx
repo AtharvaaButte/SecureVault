@@ -111,7 +111,7 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [regOrgName, setRegOrgName] = useState('');
-  const [regName, setRegName] = useState('');
+  const [regOwnerName, setRegOwnerName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
@@ -461,7 +461,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orgName: regOrgName, name: regName, email: regEmail, password: regPassword }),
+        body: JSON.stringify({ orgName: regOrgName, name: regOwnerName, email: regEmail, password: regPassword }),
       });
       const data = await parseJsonResponse(res, 'Registration failed');
       setToken(data.token);
