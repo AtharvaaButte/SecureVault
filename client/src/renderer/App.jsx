@@ -101,6 +101,7 @@ export default function App() {
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
 
   // Helper for JSON API calls & status checks
   const parseJsonResponse = async (res, fallbackMessage = 'Request failed') => {
@@ -428,8 +429,25 @@ export default function App() {
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+
+    const hasMinLen = regPassword.length >= 8;
+    const hasUpper = /[A-Z]/.test(regPassword);
+    const hasLower = /[a-z]/.test(regPassword);
+    const hasNumber = /[0-9]/.test(regPassword);
+    const hasSpecial = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(regPassword);
+
+    if (!hasMinLen || !hasUpper || !hasLower || !hasNumber || !hasSpecial) {
+      setError('Password must be at least 8 characters long and contain at least 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character.');
+      return;
+    }
+
+    if (regPassword !== regConfirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
@@ -444,7 +462,7 @@ export default function App() {
       if (window.electronAPI) {
         await window.electronAPI.saveSession(data.token);
       }
-      setupCryptoIdentity(data.token);
+      setupCryptoIdentity(data.token, data.user);
       fetchAllData(data.token);
       setSuccessMsg('Organization & Owner account created successfully.');
     } catch (err) {
@@ -877,61 +895,125 @@ export default function App() {
               <button type="submit" disabled={loading} className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }}>
                 {loading ? 'Authenticating...' : 'Sign In to SecureVault'}
               </button>
+
+              <div style={{ textAlign: 'center', marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const tokenInput = prompt('Please enter your Account Setup Token:');
+                    if (tokenInput && tokenInput.trim()) {
+                      setActiveSetupToken(tokenInput.trim());
+                    }
+                  }}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}
+                >
+                  Have an Account Setup Token? Complete Setup Here
+                </button>
+              </div>
             </form>
           ) : (
-            <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div className="form-group">
-                <label className="form-label">Organization Name</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="Acme Security Corp"
-                  value={regOrgName}
-                  onChange={(e) => setRegOrgName(e.target.value)}
-                  required
-                />
-              </div>
+            (() => {
+              const regStrength = {
+                hasMinLen: (regPassword || '').length >= 8,
+                hasUpper: /[A-Z]/.test(regPassword || ''),
+                hasLower: /[a-z]/.test(regPassword || ''),
+                hasNumber: /[0-9]/.test(regPassword || ''),
+                hasSpecial: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(regPassword || ''),
+              };
+              const isRegValid = Object.values(regStrength).every(Boolean);
 
-              <div className="form-group">
-                <label className="form-label">Owner Full Name</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="Atharva Butte"
-                  value={regName}
-                  onChange={(e) => setRegName(e.target.value)}
-                  required
-                />
-              </div>
+              return (
+                <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div className="form-group">
+                    <label className="form-label">Organization Name *</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Acme Security Corp"
+                      value={regOrgName}
+                      onChange={(e) => setRegOrgName(e.target.value)}
+                      required
+                    />
+                  </div>
 
-              <div className="form-group">
-                <label className="form-label">Owner Email Address</label>
-                <input
-                  type="email"
-                  className="form-input"
-                  placeholder="owner@acme.com"
-                  value={regEmail}
-                  onChange={(e) => setRegEmail(e.target.value)}
-                  required
-                />
-              </div>
+                  <div className="form-group">
+                    <label className="form-label">Owner Full Name *</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Atharva Butte"
+                      value={regName}
+                      onChange={(e) => setRegName(e.target.value)}
+                      required
+                    />
+                  </div>
 
-              <div className="form-group">
-                <label className="form-label">Owner Password</label>
-                <input
-                  type="password"
-                  className="form-input"
-                  placeholder="Minimum 8 characters"
-                  value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  required
-                />
-              </div>
+                  <div className="form-group">
+                    <label className="form-label">Owner Email Address *</label>
+                    <input
+                      type="email"
+                      className="form-input"
+                      placeholder="owner@acme.com"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      required
+                    />
+                  </div>
 
-              <button type="submit" disabled={loading} className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }}>
-                {loading ? 'Registering...' : 'Register & Create Vault'}
-              </button>
-            </form>
+                  <div className="form-group">
+                    <label className="form-label">Owner Password *</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      placeholder="Enter strong password"
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+
+                  {/* Password Requirements Checklist */}
+                  <div style={{ backgroundColor: 'var(--bg-dark-input)', padding: '0.65rem 0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.725rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                    <span style={{ color: regStrength.hasMinLen ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      {regStrength.hasMinLen ? '✓' : '•'} 8+ Characters
+                    </span>
+                    <span style={{ color: regStrength.hasUpper ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      {regStrength.hasUpper ? '✓' : '•'} 1 Uppercase Letter
+                    </span>
+                    <span style={{ color: regStrength.hasLower ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      {regStrength.hasLower ? '✓' : '•'} 1 Lowercase Letter
+                    </span>
+                    <span style={{ color: regStrength.hasNumber ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      {regStrength.hasNumber ? '✓' : '•'} 1 Number
+                    </span>
+                    <span style={{ color: regStrength.hasSpecial ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem', gridColumn: 'span 2' }}>
+                      {regStrength.hasSpecial ? '✓' : '•'} 1 Special Character (!@#$%^&*)
+                    </span>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Confirm Password *</label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      placeholder="Re-enter password"
+                      value={regConfirmPassword}
+                      onChange={(e) => setRegConfirmPassword(e.target.value)}
+                      required
+                    />
+                    {regConfirmPassword && regPassword !== regConfirmPassword && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--accent-rose)', marginTop: '0.25rem' }}>
+                        Passwords do not match.
+                      </div>
+                    )}
+                  </div>
+
+                  <button type="submit" disabled={loading || !isRegValid || regPassword !== regConfirmPassword} className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }}>
+                    {loading ? 'Registering...' : 'Register & Create Vault'}
+                  </button>
+                </form>
+              );
+            })()
           )}
         </div>
       </div>

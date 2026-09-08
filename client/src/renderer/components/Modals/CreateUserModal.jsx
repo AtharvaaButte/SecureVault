@@ -22,6 +22,19 @@ export default function CreateUserModal({ isOpen, onClose, onCreateUser, availab
     );
   };
 
+  const checkPasswordStrength = (pwd) => {
+    return {
+      hasMinLen: (pwd || '').length >= 8,
+      hasUpper: /[A-Z]/.test(pwd || ''),
+      hasLower: /[a-z]/.test(pwd || ''),
+      hasNumber: /[0-9]/.test(pwd || ''),
+      hasSpecial: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd || ''),
+    };
+  };
+
+  const pwdStrength = checkPasswordStrength(password);
+  const isPwdValid = Object.values(pwdStrength).every(Boolean);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
@@ -36,8 +49,8 @@ export default function CreateUserModal({ isOpen, onClose, onCreateUser, availab
       return;
     }
 
-    if (!useSetupLink && (!password || password.length < 6)) {
-      setError('Password must be at least 6 characters long.');
+    if (!useSetupLink && !isPwdValid) {
+      setError('Initial password must be at least 8 characters long and include an uppercase letter, lowercase letter, number, and special character.');
       return;
     }
 
@@ -212,11 +225,30 @@ export default function CreateUserModal({ isOpen, onClose, onCreateUser, availab
                   type="password"
                   required
                   className="form-control"
-                  placeholder="Enter initial password (min 6 chars)"
+                  placeholder="Enter initial strong password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ paddingLeft: '2.5rem' }}
                 />
+              </div>
+
+              {/* Password Requirements Checklist */}
+              <div style={{ backgroundColor: 'var(--bg-dark-input)', padding: '0.65rem 0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.725rem', marginTop: '0.5rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                <span style={{ color: pwdStrength.hasMinLen ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  {pwdStrength.hasMinLen ? '✓' : '•'} 8+ Characters
+                </span>
+                <span style={{ color: pwdStrength.hasUpper ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  {pwdStrength.hasUpper ? '✓' : '•'} 1 Uppercase Letter
+                </span>
+                <span style={{ color: pwdStrength.hasLower ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  {pwdStrength.hasLower ? '✓' : '•'} 1 Lowercase Letter
+                </span>
+                <span style={{ color: pwdStrength.hasNumber ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  {pwdStrength.hasNumber ? '✓' : '•'} 1 Number
+                </span>
+                <span style={{ color: pwdStrength.hasSpecial ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem', gridColumn: 'span 2' }}>
+                  {pwdStrength.hasSpecial ? '✓' : '•'} 1 Special Character (!@#$%^&*)
+                </span>
               </div>
             </div>
           )}

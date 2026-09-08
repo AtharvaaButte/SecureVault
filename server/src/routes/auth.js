@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
+const { validateStrongPassword } = require('../utils/validation');
 const rbacService = require('../services/rbacService');
 const auditService = require('../services/auditService');
 const geoService = require('../services/geoService');
@@ -22,6 +23,11 @@ router.post('/register', async (req, res) => {
 
   if (!orgName || !email || !password) {
     return res.status(400).json({ message: 'Organization name, email, and password are required.' });
+  }
+
+  const passwordCheck = validateStrongPassword(password);
+  if (!passwordCheck.valid) {
+    return res.status(400).json({ message: passwordCheck.message });
   }
 
   const normalizedEmail = email.trim().toLowerCase();
@@ -312,8 +318,9 @@ router.post('/setup/:token', async (req, res) => {
   const { token } = req.params;
   const { password, publicKey, securityHint } = req.body;
 
-  if (!password || password.trim().length < 6) {
-    return res.status(400).json({ message: 'Password must be at least 6 characters long.' });
+  const passwordCheck = validateStrongPassword(password);
+  if (!passwordCheck.valid) {
+    return res.status(400).json({ message: passwordCheck.message });
   }
 
   const client = await pool.connect();

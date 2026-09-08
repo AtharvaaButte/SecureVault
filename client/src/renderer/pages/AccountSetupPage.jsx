@@ -40,12 +40,25 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
     checkToken();
   }, [setupToken]);
 
+  const checkPasswordStrength = (pwd) => {
+    return {
+      hasMinLen: (pwd || '').length >= 8,
+      hasUpper: /[A-Z]/.test(pwd || ''),
+      hasLower: /[a-z]/.test(pwd || ''),
+      hasNumber: /[0-9]/.test(pwd || ''),
+      hasSpecial: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd || ''),
+    };
+  };
+
+  const strength = checkPasswordStrength(password);
+  const isPasswordValid = Object.values(strength).every(Boolean);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters long.');
+    if (!isPasswordValid) {
+      setError('Please ensure your password meets all strong password requirements.');
       return;
     }
 
@@ -144,14 +157,14 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
             </div>
 
             <div className="form-group">
-              <label className="form-label">New Password</label>
+              <label className="form-label">New Password *</label>
               <div style={styles.inputWrapper}>
                 <Lock size={16} style={styles.inputIcon} />
                 <input
                   type="password"
                   required
                   className="form-control"
-                  placeholder="Enter secure password (min 6 chars)"
+                  placeholder="Enter strong password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ paddingLeft: '2.5rem' }}
@@ -159,8 +172,27 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
               </div>
             </div>
 
+            {/* Password Requirements Checklist */}
+            <div style={{ backgroundColor: 'var(--bg-dark-input)', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '0.75rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.4rem' }}>
+              <span style={{ color: strength.hasMinLen ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                {strength.hasMinLen ? '✓' : '•'} 8+ Characters
+              </span>
+              <span style={{ color: strength.hasUpper ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                {strength.hasUpper ? '✓' : '•'} 1 Uppercase Letter
+              </span>
+              <span style={{ color: strength.hasLower ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                {strength.hasLower ? '✓' : '•'} 1 Lowercase Letter
+              </span>
+              <span style={{ color: strength.hasNumber ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                {strength.hasNumber ? '✓' : '•'} 1 Number
+              </span>
+              <span style={{ color: strength.hasSpecial ? 'var(--accent-emerald)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem', gridColumn: 'span 2' }}>
+                {strength.hasSpecial ? '✓' : '•'} 1 Special Character (!@#$%^&*)
+              </span>
+            </div>
+
             <div className="form-group">
-              <label className="form-label">Confirm Password</label>
+              <label className="form-label">Confirm Password *</label>
               <div style={styles.inputWrapper}>
                 <Lock size={16} style={styles.inputIcon} />
                 <input
@@ -173,6 +205,11 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
                   style={{ paddingLeft: '2.5rem' }}
                 />
               </div>
+              {confirmPassword && password !== confirmPassword && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--accent-rose)', marginTop: '0.25rem' }}>
+                  Passwords do not match.
+                </div>
+              )}
             </div>
 
             <div className="form-group">
@@ -192,7 +229,7 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
               </div>
             </div>
 
-            <button type="submit" disabled={submitting} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}>
+            <button type="submit" disabled={submitting || !isPasswordValid || password !== confirmPassword} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}>
               {submitting ? 'Activating Account...' : 'Complete Account Setup'}
             </button>
 

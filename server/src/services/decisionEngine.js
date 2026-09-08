@@ -87,14 +87,14 @@ async function evaluateContextualDecision(userId, req, operationType, dataClassi
     riskFactors.push('HIGHLY_SENSITIVE_RESOURCE');
     if (operationType === 'FILE_READ' || isHighImpact) {
       stepUpTriggered = true;
-      if (!triggerReason) triggerReason = `Step-up re-authentication required to access HIGHLY_SENSITIVE file (${operationType}).`;
+      if (!triggerReason) triggerReason = `Step-up re-authentication required to access HIGHLY_CONFIDENTIAL file (${operationType}).`;
       if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_HIGHLY_SENSITIVE_RESOURCE';
     }
   } else if (normalizedClassification === 'CONFIDENTIAL') {
     riskFactors.push('SENSITIVE_RESOURCE');
-    if (isHighImpact && orgPolicyWithGeo.require_stepup_sensitive_file) {
+    if (operationType === 'FILE_READ' || isHighImpact) {
       stepUpTriggered = true;
-      if (!triggerReason) triggerReason = `Step-up re-authentication required for high-impact operation on SENSITIVE file (${operationType}).`;
+      if (!triggerReason) triggerReason = `Step-up re-authentication required for operation on CONFIDENTIAL file (${operationType}).`;
       if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_SENSITIVE_RESOURCE';
     }
   }

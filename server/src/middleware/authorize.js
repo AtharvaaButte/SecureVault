@@ -126,6 +126,7 @@ function requireFileAccess(accessType) {
         return res.status(403).json({
           message: riskResult.message || 'Access denied by sensitivity policy.',
           stepUpRequired: riskResult.stepUpRequired || false,
+          decisionCode: riskResult.decisionCode,
         });
       }
 

@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/authorize');
+const { validateStrongPassword } = require('../utils/validation');
 const rbacService = require('../services/rbacService');
 
 const router = express.Router();
@@ -205,7 +206,11 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
     let isActive = false;
     let userStatus = 'SETUP_REQUIRED';
 
-    if (password && password.trim().length >= 6) {
+    if (password && String(password).trim().length > 0) {
+      const passwordCheck = validateStrongPassword(password);
+      if (!passwordCheck.valid) {
+        return res.status(400).json({ message: passwordCheck.message });
+      }
       passwordHash = await argon2.hash(password.trim(), { type: argon2.argon2id });
       isActive = true;
       userStatus = 'ACTIVE';
