@@ -93,10 +93,9 @@ export default function CreateUserModal({ isOpen, onClose, onCreateUser, availab
     onClose();
   };
 
-  const copySetupLink = () => {
+  const copySetupToken = () => {
     if (!createdUserResult?.setupToken) return;
-    const fullUrl = `${window.location.origin}/setup/${createdUserResult.setupToken}`;
-    navigator.clipboard.writeText(fullUrl);
+    navigator.clipboard.writeText(createdUserResult.setupToken.trim());
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 3000);
   };
@@ -111,24 +110,24 @@ export default function CreateUserModal({ isOpen, onClose, onCreateUser, availab
         <div style={{ padding: '0.5rem 0' }}>
           <Alert
             type="success"
-            message={`User account for ${createdUserResult.name} was created with pending setup link.`}
+            message={`User account for ${createdUserResult.name} was created successfully.`}
             style={{ marginBottom: '1.25rem' }}
           />
 
           <div style={styles.tokenBox}>
-            <div style={styles.tokenLabel}>Account Setup Token</div>
+            <div style={styles.tokenLabel}>Account Activation Code</div>
             <div style={styles.tokenValue}>{createdUserResult.setupToken}</div>
             <div style={styles.tokenHint}>
-              Share this setup token with <strong>{createdUserResult.name}</strong> to allow them to activate their account and set a password.
+              Share this activation code with <strong>{createdUserResult.name}</strong> to allow them to activate their account and set a password.
             </div>
             <button
               type="button"
-              onClick={copySetupLink}
+              onClick={copySetupToken}
               className="btn btn-secondary btn-sm"
               style={{ marginTop: '0.75rem', width: '100%', justifyContent: 'center' }}
             >
               {copiedLink ? <Check size={16} color="var(--accent-emerald)" /> : <Copy size={16} />}
-              <span>{copiedLink ? 'Setup Token Copied!' : 'Copy Setup Token'}</span>
+              <span>{copiedLink ? 'Activation Code Copied!' : 'Copy Activation Code'}</span>
             </button>
           </div>
 
@@ -190,9 +189,9 @@ export default function CreateUserModal({ isOpen, onClose, onCreateUser, availab
                   onChange={() => setUseSetupLink(true)}
                 />
                 <div>
-                  <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>Send Account Setup Link (Recommended)</div>
+                  <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>Generate Activation Code (Recommended)</div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    User receives a setup token and activates their account by setting their own password.
+                    User receives an activation code and activates their account by setting their own password.
                   </div>
                 </div>
               </label>

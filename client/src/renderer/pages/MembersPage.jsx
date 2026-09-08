@@ -21,10 +21,9 @@ export default function MembersPage({
   const canCreate = isOwner || (userPermissions && userPermissions.includes('USER_CREATE'));
   const canManage = isOwner || (userPermissions && userPermissions.includes('USER_MANAGE'));
 
-  const handleCopySetupLink = (memberId, token) => {
+  const handleCopySetupToken = (memberId, token) => {
     if (!token) return;
-    const fullUrl = `${window.location.origin}/setup/${token}`;
-    navigator.clipboard.writeText(fullUrl);
+    navigator.clipboard.writeText(String(token).trim());
     setCopiedTokens((prev) => ({ ...prev, [memberId]: true }));
     setTimeout(() => {
       setCopiedTokens((prev) => ({ ...prev, [memberId]: false }));
@@ -113,9 +112,9 @@ export default function MembersPage({
                         </span>
                         {member.setupToken && (canManage || canCreate) && (
                           <button
-                            onClick={() => handleCopySetupLink(member.id, member.setupToken)}
+                            onClick={() => handleCopySetupToken(member.id, member.setupToken)}
                             className="btn btn-secondary btn-sm"
-                            title="Copy setup link"
+                            title="Copy activation code"
                             style={{ padding: '0.2rem 0.4rem' }}
                           >
                             {copiedTokens[member.id] ? <Check size={12} color="var(--accent-emerald)" /> : <Copy size={12} />}
