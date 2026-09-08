@@ -7,6 +7,7 @@ import Header from './components/Layout/Header';
 // Common Components
 import Alert from './components/Common/Alert';
 import LoadingSpinner from './components/Common/LoadingSpinner';
+import Modal from './components/Common/Modal';
 
 // Modal Components
 import StepUpModal from './components/Modals/StepUpModal';
@@ -86,6 +87,8 @@ export default function App() {
   const [activeShareModalFile, setActiveShareModalFile] = useState(null);
   const [editingUserModalTarget, setEditingUserModalTarget] = useState(null);
   const [showCreateRoleModal, setShowCreateRoleModal] = useState(false);
+  const [showSetupTokenModal, setShowSetupTokenModal] = useState(false);
+  const [setupTokenInput, setSetupTokenInput] = useState('');
 
   // UI System States
   const [authTab, setAuthTab] = useState('login'); // 'login' | 'register'
@@ -899,12 +902,7 @@ export default function App() {
               <div style={{ textAlign: 'center', marginTop: '0.5rem' }}>
                 <button
                   type="button"
-                  onClick={() => {
-                    const tokenInput = prompt('Please enter your Account Setup Token:');
-                    if (tokenInput && tokenInput.trim()) {
-                      setActiveSetupToken(tokenInput.trim());
-                    }
-                  }}
+                  onClick={() => setShowSetupTokenModal(true)}
                   style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}
                 >
                   Have an Account Setup Token? Complete Setup Here
@@ -1178,6 +1176,59 @@ export default function App() {
         onCreateRole={handleCreateRole}
         onClose={() => setShowCreateRoleModal(false)}
       />
+
+      {/* Account Setup Token Modal */}
+      <Modal
+        isOpen={showSetupTokenModal}
+        title="Enter Account Setup Token"
+        onClose={() => {
+          setShowSetupTokenModal(false);
+          setSetupTokenInput('');
+        }}
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (setupTokenInput && setupTokenInput.trim()) {
+              setActiveSetupToken(setupTokenInput.trim());
+              setShowSetupTokenModal(false);
+              setSetupTokenInput('');
+            }
+          }}
+          style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+        >
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: 0 }}>
+            Please enter your Account Setup Token provided by your organization administrator.
+          </p>
+          <div className="form-group">
+            <label className="form-label">Setup Token *</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Paste your setup token here..."
+              value={setupTokenInput}
+              onChange={(e) => setSetupTokenInput(e.target.value)}
+              required
+              autoFocus
+            />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                setShowSetupTokenModal(false);
+                setSetupTokenInput('');
+              }}
+            >
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={!setupTokenInput.trim()}>
+              Continue Setup
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
