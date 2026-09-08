@@ -312,17 +312,59 @@ export default function FilesPage({
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '1.25rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)' }}>
-                    <button
-                      onClick={() => onDownloadSharedFile(file.id)}
-                      disabled={sharedDownloadStatus[file.id]}
-                      className="btn btn-secondary btn-sm"
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                    >
-                      <Download size={14} />
-                      <span>{sharedDownloadStatus[file.id] ? 'Unwrapping DEK...' : 'Download & Decrypt'}</span>
-                    </button>
-                  </div>
+                  {(() => {
+                    const canShareSharedFile = canShare && (!file.blockedOperations || !file.blockedOperations.includes('FILE_SHARE'));
+                    const canDeleteSharedFile = canDelete && (!file.blockedOperations || !file.blockedOperations.includes('FILE_DELETE'));
+
+                    return (
+                      <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '1.25rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => setInspectingFile(file)}
+                          className="btn btn-secondary btn-sm"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                          title="View technical security metadata"
+                        >
+                          <Eye size={14} />
+                          <span>Details</span>
+                        </button>
+
+                        <button
+                          onClick={() => onDownloadSharedFile(file.id)}
+                          disabled={sharedDownloadStatus[file.id]}
+                          className="btn btn-secondary btn-sm"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                        >
+                          <Download size={14} />
+                          <span>{sharedDownloadStatus[file.id] ? 'Unwrapping DEK...' : 'Download & Decrypt'}</span>
+                        </button>
+
+                        {canShareSharedFile && (
+                          <button
+                            onClick={() => onOpenShareModal(file)}
+                            className="btn btn-primary btn-sm"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                            title="Share file with other members"
+                          >
+                            <Share2 size={14} />
+                            <span>Share</span>
+                          </button>
+                        )}
+
+                        {canDeleteSharedFile && (
+                          <button
+                            onClick={() => handleDeleteSubmit(file.id)}
+                            disabled={deletingId === file.id}
+                            className="btn btn-danger btn-sm"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                            title="Delete file access"
+                          >
+                            <Trash2 size={14} />
+                            <span>{deletingId === file.id ? 'Deleting...' : 'Delete'}</span>
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </Card>
               );
             })}

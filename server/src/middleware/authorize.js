@@ -69,7 +69,7 @@ function requireFileAccess(accessType) {
 
       // 2. Fetch file details from PostgreSQL
       const result = await pool.query(
-        `SELECT f.id, f.owner_id, f.data_classification, u.organization_id 
+        `SELECT f.id, f.owner_id, f.storage_key, f.data_classification, u.organization_id 
          FROM files f 
          JOIN users u ON f.owner_id = u.id 
          WHERE f.id = $1`,
