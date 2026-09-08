@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Lock, KeyRound, CheckCircle2, AlertCircle, ArrowRight } from 'lucide-react';
+import React, { useState } from 'react';
+import { ShieldCheck, Lock, KeyRound, CheckCircle2, Mail, Key, ArrowRight } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Alert from '../components/Common/Alert';
 
-function cleanSetupToken(token) {
+function cleanTokenStr(token) {
   if (!token) return '';
   let str = String(token).trim();
   if (str.includes('/setup/')) {
@@ -12,44 +12,18 @@ function cleanSetupToken(token) {
   return decodeURIComponent(str).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
 }
 
-export default function AccountSetupPage({ setupToken, onSetupComplete, onBackToLogin }) {
-  const [tokenInfo, setTokenInfo] = useState(null);
-  const [loading, setLoading] = useState(true);
+export default function AccountSetupPage({ setupToken: initialToken = '', initialEmail = '', onBackToLogin }) {
+  const [email, setEmail] = useState(initialEmail || '');
+  const [setupToken, setSetupToken] = useState(initialToken ? cleanTokenStr(initialToken) : '');
+  const [step, setStep] = useState(1); // Step 1: Verify Email+Token, Step 2: Set Password, Step 3: Success
+  const [verifiedUser, setVerifiedUser] = useState(null);
+
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [securityHint, setSecurityHint] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(false);
-
-  const cleanToken = cleanSetupToken(setupToken);
-
-  useEffect(() => {
-    if (!cleanToken) {
-      setError('Account setup token or link is missing.');
-      setLoading(false);
-      return;
-    }
-
-    const checkToken = async () => {
-      try {
-        const response = await fetch(`http://localhost:5000/api/auth/setup/${encodeURIComponent(cleanToken)}`);
-        const data = await response.json();
-
-        if (!response.ok) {
-          setError(data.message || 'Invalid or expired account setup link.');
-        } else {
-          setTokenInfo(data.user);
-        }
-      } catch (err) {
-        setError('Unable to connect to authentication server. Please check your network connection.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkToken();
-  }, [cleanToken]);
 
   const checkPasswordStrength = (pwd) => {
     return {
@@ -64,7 +38,48 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
   const strength = checkPasswordStrength(password);
   const isPasswordValid = Object.values(strength).every(Boolean);
 
-  const handleSubmit = async (e) => {
+  // Step 1: Verify Email + Setup Token
+  const handleVerify = async (e) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!email.trim()) {
+      setError('Email Address is required.');
+      return;
+    }
+
+    if (!setupToken.trim()) {
+      setError('Setup Token is required.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('http://localhost:5000/api/auth/setup/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim(),
+          setupToken: cleanTokenStr(setupToken),
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.message || 'Verification failed. Please check your Email Address and Setup Token.');
+      } else {
+        setVerifiedUser(data.user);
+        setStep(2);
+      }
+    } catch (err) {
+      setError('Unable to connect to server. Please check your network connection.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Step 2: Complete Setup (Set Password & Register Key)
+  const handleComplete = async (e) => {
     e.preventDefault();
     setError(null);
 
@@ -78,7 +93,7 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
       return;
     }
 
-    setSubmitting(true);
+    setLoading(true);
     try {
       let pubKey = null;
       if (window.electronAPI && typeof window.electronAPI.ensureIdentity === 'function') {
@@ -92,38 +107,30 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
         pubKey = `-----BEGIN PUBLIC KEY-----\nMCowKOYDK2VuA3IBAE${Buffer.from(String(Date.now())).toString('base64')}\n-----END PUBLIC KEY-----`;
       }
 
-      const response = await fetch(`http://localhost:5000/api/auth/setup/${encodeURIComponent(cleanToken)}`, {
+      const response = await fetch('http://localhost:5000/api/auth/setup/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password, publicKey: pubKey, securityHint }),
+        body: JSON.stringify({
+          email: email.trim(),
+          setupToken: cleanTokenStr(setupToken),
+          password: password.trim(),
+          publicKey: pubKey,
+          securityHint: securityHint.trim(),
+        }),
       });
 
       const data = await response.json();
       if (!response.ok) {
         setError(data.message || 'Failed to activate account.');
       } else {
-        setSuccess(true);
-        if (onSetupComplete) onSetupComplete();
+        setStep(3);
       }
     } catch (err) {
       setError('Network error while completing setup. Please try again.');
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   };
-
-  if (loading) {
-    return (
-      <div style={styles.container}>
-        <Card style={styles.card}>
-          <div style={{ textAlign: 'center', padding: '2rem' }}>
-            <div className="spinner" style={{ margin: '0 auto 1rem' }}></div>
-            <p style={{ color: 'var(--text-secondary)' }}>Validating account setup link...</p>
-          </div>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div style={styles.container}>
@@ -132,38 +139,85 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
           <div style={styles.logoBadge}>
             <ShieldCheck size={28} color="#ffffff" />
           </div>
-          <h2 style={styles.title}>Activate Account</h2>
+          <h2 style={styles.title}>Complete Account Setup</h2>
           <p style={styles.subtitle}>
-            Welcome to <strong>{tokenInfo?.organizationName || 'SecureVault'}</strong>. Set up your password to activate your account.
+            {step === 1
+              ? 'Verify your member email address and setup token to activate your account.'
+              : step === 2
+              ? `Welcome to ${verifiedUser?.organizationName || 'SecureVault'}. Set up your new password below.`
+              : 'Account setup complete. Proceed to Sign In.'}
           </p>
         </div>
 
         {error && <Alert type="danger" message={error} style={{ marginBottom: '1.25rem' }} />}
 
-        {success ? (
-          <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
-            <CheckCircle2 size={48} color="var(--accent-emerald)" style={{ margin: '0 auto 1rem' }} />
-            <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
-              Account Activated Successfully!
-            </h3>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-              Your password has been configured. You can now log in to your vault workspace.
-            </p>
-            <button onClick={onBackToLogin} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
-              <span>Proceed to Login</span>
-              <ArrowRight size={16} />
+        {/* STEP 1: Verify Email + Setup Token */}
+        {step === 1 && (
+          <form onSubmit={handleVerify} style={styles.form}>
+            <div className="form-group">
+              <label className="form-label">Email Address *</label>
+              <div style={styles.inputWrapper}>
+                <Mail size={16} style={styles.inputIcon} />
+                <input
+                  type="email"
+                  required
+                  className="form-control"
+                  placeholder="user@organization.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  style={{ paddingLeft: '2.5rem' }}
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Setup Token *</label>
+              <div style={styles.inputWrapper}>
+                <Key size={16} style={styles.inputIcon} />
+                <input
+                  type="text"
+                  required
+                  className="form-control"
+                  placeholder="Paste setup token or activation link"
+                  value={setupToken}
+                  onChange={(e) => setSetupToken(e.target.value)}
+                  style={{ paddingLeft: '2.5rem' }}
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || !email.trim() || !setupToken.trim()}
+              className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}
+            >
+              {loading ? 'Verifying Credentials...' : 'Verify Credentials'}
             </button>
-          </div>
-        ) : tokenInfo ? (
-          <form onSubmit={handleSubmit} style={styles.form}>
-            {/* User Metadata Overview */}
+
+            <button
+              type="button"
+              onClick={onBackToLogin}
+              className="btn btn-secondary"
+              style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}
+            >
+              Back to Login
+            </button>
+          </form>
+        )}
+
+        {/* STEP 2: Configure Password & Register Key */}
+        {step === 2 && verifiedUser && (
+          <form onSubmit={handleComplete} style={styles.form}>
             <div style={styles.userBox}>
               <div>
-                <div style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--text-primary)' }}>{tokenInfo.name}</div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{tokenInfo.email}</div>
+                <div style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                  {verifiedUser.name}
+                </div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{verifiedUser.email}</div>
               </div>
               <span className="badge badge-owner" style={{ backgroundColor: 'rgba(37, 99, 235, 0.15)', color: '#60a5fa' }}>
-                Pending Activation
+                Verified
               </span>
             </div>
 
@@ -225,7 +279,7 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
 
             <div className="form-group">
               <label className="form-label">
-                Security / Memory Hint <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>(Optional)</span>
+                Security Hint <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>(Optional)</span>
               </label>
               <div style={styles.inputWrapper}>
                 <KeyRound size={16} style={styles.inputIcon} />
@@ -240,18 +294,39 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
               </div>
             </div>
 
-            <button type="submit" disabled={submitting || !isPasswordValid || password !== confirmPassword} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}>
-              {submitting ? 'Activating Account...' : 'Complete Account Setup'}
+            <button
+              type="submit"
+              disabled={loading || !isPasswordValid || password !== confirmPassword}
+              className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}
+            >
+              {loading ? 'Activating Account...' : 'Activate Account & Set Password'}
             </button>
 
-            <button type="button" onClick={onBackToLogin} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}>
-              Back to Login
+            <button
+              type="button"
+              onClick={() => setStep(1)}
+              className="btn btn-secondary"
+              style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem' }}
+            >
+              Back to Verification
             </button>
           </form>
-        ) : (
-          <div style={{ textAlign: 'center', marginTop: '1rem' }}>
-            <button onClick={onBackToLogin} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center' }}>
-              Back to Login
+        )}
+
+        {/* STEP 3: Success Screen */}
+        {step === 3 && (
+          <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+            <CheckCircle2 size={48} color="var(--accent-emerald)" style={{ margin: '0 auto 1rem' }} />
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+              Account Activated Successfully!
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.875rem', lineHeight: '1.5' }}>
+              Your password has been configured and your encryption identity has been registered. You can now log in using your email address and password.
+            </p>
+            <button onClick={onBackToLogin} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+              <span>Proceed to Login</span>
+              <ArrowRight size={16} />
             </button>
           </div>
         )}

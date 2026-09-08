@@ -97,6 +97,7 @@ export default function App() {
   const [editingUserModalTarget, setEditingUserModalTarget] = useState(null);
   const [showCreateRoleModal, setShowCreateRoleModal] = useState(false);
   const [showSetupTokenModal, setShowSetupTokenModal] = useState(false);
+  const [setupEmailInput, setSetupEmailInput] = useState('');
   const [setupTokenInput, setSetupTokenInput] = useState('');
 
   // UI System States
@@ -412,11 +413,7 @@ export default function App() {
 
       if (!res.ok) {
         if (data.setupRequired) {
-          if (data.setupToken) {
-            setActiveSetupToken(data.setupToken);
-          } else {
-            setError('Account setup is required before you can continue. Please use your account activation setup link.');
-          }
+          setError('Account setup is required before you can log in. Please click "Have an Account Setup Token? Complete Setup Here" below to verify your token and set your password.');
           return;
         }
         throw new Error(data.message || 'Invalid email or password.');
@@ -812,9 +809,11 @@ export default function App() {
   };
 
   if (activeSetupToken) {
+    const isObj = typeof activeSetupToken === 'object' && activeSetupToken !== null;
     return (
       <AccountSetupPage
-        setupToken={activeSetupToken}
+        setupToken={isObj ? activeSetupToken.setupToken : activeSetupToken}
+        initialEmail={isObj ? activeSetupToken.email : ''}
         onSetupComplete={() => setActiveSetupToken(null)}
         onBackToLogin={() => setActiveSetupToken(null)}
       />
@@ -1027,9 +1026,10 @@ export default function App() {
         {/* Account Setup Token Modal for Auth Screen */}
         <Modal
           isOpen={showSetupTokenModal}
-          title="Enter Account Setup Token"
+          title="Complete Account Setup"
           onClose={() => {
             setShowSetupTokenModal(false);
+            setSetupEmailInput('');
             setSetupTokenInput('');
           }}
         >
@@ -1037,27 +1037,39 @@ export default function App() {
             onSubmit={(e) => {
               e.preventDefault();
               const cleaned = cleanSetupToken(setupTokenInput);
-              if (cleaned) {
-                setActiveSetupToken(cleaned);
+              if (setupEmailInput.trim() && cleaned) {
+                setActiveSetupToken({ email: setupEmailInput.trim(), setupToken: cleaned });
                 setShowSetupTokenModal(false);
+                setSetupEmailInput('');
                 setSetupTokenInput('');
               }
             }}
             style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
           >
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: 0 }}>
-              Enter your Account Setup Token, full setup URL, or account email provided by your administrator.
+              Enter your member Email Address and Setup Token provided by your administrator to verify and activate your account.
             </p>
             <div className="form-group">
-              <label className="form-label">Setup Token / Link / Email *</label>
+              <label className="form-label">Email Address *</label>
+              <input
+                type="email"
+                className="form-input"
+                placeholder="user@organization.com"
+                value={setupEmailInput}
+                onChange={(e) => setSetupEmailInput(e.target.value)}
+                required
+                autoFocus
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Setup Token *</label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="Paste setup token or link (e.g. http://localhost:5173/setup/...)"
+                placeholder="Paste setup token or link"
                 value={setupTokenInput}
                 onChange={(e) => setSetupTokenInput(e.target.value)}
                 required
-                autoFocus
               />
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
@@ -1066,13 +1078,14 @@ export default function App() {
                 className="btn btn-secondary"
                 onClick={() => {
                   setShowSetupTokenModal(false);
+                  setSetupEmailInput('');
                   setSetupTokenInput('');
                 }}
               >
                 Cancel
               </button>
-              <button type="submit" className="btn btn-primary" disabled={!setupTokenInput.trim()}>
-                Continue Setup
+              <button type="submit" className="btn btn-primary" disabled={!setupEmailInput.trim() || !setupTokenInput.trim()}>
+                Verify Credentials & Continue
               </button>
             </div>
           </form>

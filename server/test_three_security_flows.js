@@ -152,15 +152,15 @@ async function runThreeSecurityFlowsTest() {
   }
   console.log(`  ✓ Pre-setup login denied with 403 setupRequired: "${preLogin.data.message}"`);
 
-  // Validate setup token
-  const setupCheck = await request('GET', `/api/auth/setup/${setupToken}`);
+  // Validate setup token via POST /api/auth/setup/verify
+  const setupCheck = await request('POST', '/api/auth/setup/verify', { email: pendingEmail, setupToken });
   if (setupCheck.status !== 200 || !setupCheck.data.valid) {
     throw new Error(`FAIL: Setup token check failed: ${JSON.stringify(setupCheck.data)}`);
   }
-  console.log('  ✓ Setup token verified successfully via GET /api/auth/setup/:token');
+  console.log('  ✓ Setup token verified successfully via POST /api/auth/setup/verify');
 
   // Complete setup with weak password -> MUST BE REJECTED 400
-  const weakSetup = await request('POST', `/api/auth/setup/${setupToken}`, { password: 'weak' });
+  const weakSetup = await request('POST', '/api/auth/setup/complete', { email: pendingEmail, setupToken, password: 'weak' });
   if (weakSetup.status !== 400) {
     throw new Error(`FAIL: Account setup with weak password was not rejected: ${weakSetup.status}`);
   }
@@ -168,7 +168,9 @@ async function runThreeSecurityFlowsTest() {
 
   // Complete setup with strong password
   const memberPass = 'StrongMemb3rP@ss!';
-  const completeSetup = await request('POST', `/api/auth/setup/${setupToken}`, {
+  const completeSetup = await request('POST', '/api/auth/setup/complete', {
+    email: pendingEmail,
+    setupToken,
     password: memberPass,
     securityHint: 'Favorite security algorithm: AES-256',
   });
@@ -179,7 +181,7 @@ async function runThreeSecurityFlowsTest() {
   console.log('  ✓ Account setup completed successfully! Status updated to ACTIVE.');
 
   // Attempt setup token reuse -> MUST BE DENIED 400
-  const reuseCheck = await request('POST', `/api/auth/setup/${setupToken}`, { password: memberPass });
+  const reuseCheck = await request('POST', '/api/auth/setup/complete', { email: pendingEmail, setupToken, password: memberPass });
   if (reuseCheck.status !== 400) {
     throw new Error(`FAIL: Reusing completed setup token was not denied: ${reuseCheck.status}`);
   }

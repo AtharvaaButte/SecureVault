@@ -267,28 +267,32 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// GET /api/auth/setup/:token - Validate account setup token or link or email
-router.get('/setup/:token', async (req, res) => {
-  let { token } = req.params;
-  if (!token) return res.status(400).json({ message: 'Token is required.' });
+// POST /api/auth/setup/verify - Verify Email + Setup Token
+router.post('/setup/verify', async (req, res) => {
+  const { email, setupToken } = req.body;
 
-  // Sanitize full URL or path if passed
-  if (token.includes('/setup/')) {
-    token = token.split('/setup/').pop();
+  if (!email || !setupToken) {
+    return res.status(400).json({ message: 'Both Email Address and Setup Token are required.' });
   }
-  token = decodeURIComponent(token).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
+
+  const normalizedEmail = String(email).trim().toLowerCase();
+  let cleanToken = String(setupToken).trim();
+  if (cleanToken.includes('/setup/')) {
+    cleanToken = cleanToken.split('/setup/').pop();
+  }
+  cleanToken = decodeURIComponent(cleanToken).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
 
   try {
     const result = await pool.query(
       `SELECT u.id, u.name, u.email, u.status, u.setup_token, u.setup_token_expires, u.is_active, o.name as organization_name
        FROM users u
        JOIN organizations o ON u.organization_id = o.id
-       WHERE u.setup_token = $1 OR LOWER(u.email) = LOWER($1)`,
-      [token]
+       WHERE LOWER(u.email) = $1 AND u.setup_token = $2`,
+      [normalizedEmail, cleanToken]
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).json({ message: 'Invalid or expired account setup link.' });
+      return res.status(400).json({ message: 'Invalid email address or setup token.' });
     }
 
     const user = result.rows[0];
@@ -298,11 +302,11 @@ router.get('/setup/:token', async (req, res) => {
     }
 
     if (user.status === 'ACTIVE' || user.is_active) {
-      return res.status(400).json({ message: 'This account setup has already been completed. Please log in.' });
+      return res.status(400).json({ message: 'This account setup has already been completed. Please log in with your email and password.' });
     }
 
     if (user.setup_token_expires && new Date(user.setup_token_expires) < new Date()) {
-      return res.status(400).json({ message: 'Account setup link has expired. Please contact your organization administrator.' });
+      return res.status(400).json({ message: 'Account setup token has expired. Please contact your organization administrator.' });
     }
 
     res.json({
@@ -317,22 +321,25 @@ router.get('/setup/:token', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[Auth Setup Check Error]:', error.message);
-    res.status(500).json({ message: 'Failed to validate account setup token.' });
+    console.error('[Auth Setup Verify Error]:', error.message);
+    res.status(500).json({ message: 'Failed to verify account setup credentials.' });
   }
 });
 
-// POST /api/auth/setup/:token - Complete account setup (set password, register public key, update status to ACTIVE)
-router.post('/setup/:token', async (req, res) => {
-  let { token } = req.params;
-  if (!token) return res.status(400).json({ message: 'Token is required.' });
+// POST /api/auth/setup/complete - Complete setup with password & key registration
+router.post('/setup/complete', async (req, res) => {
+  const { email, setupToken, password, publicKey, securityHint } = req.body;
 
-  if (token.includes('/setup/')) {
-    token = token.split('/setup/').pop();
+  if (!email || !setupToken || !password) {
+    return res.status(400).json({ message: 'Email, Setup Token, and Password are required.' });
   }
-  token = decodeURIComponent(token).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
 
-  const { password, publicKey, securityHint } = req.body;
+  const normalizedEmail = String(email).trim().toLowerCase();
+  let cleanToken = String(setupToken).trim();
+  if (cleanToken.includes('/setup/')) {
+    cleanToken = cleanToken.split('/setup/').pop();
+  }
+  cleanToken = decodeURIComponent(cleanToken).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
 
   const passwordCheck = validateStrongPassword(password);
   if (!passwordCheck.valid) {
@@ -346,13 +353,13 @@ router.post('/setup/:token', async (req, res) => {
     const result = await client.query(
       `SELECT u.id, u.name, u.email, u.organization_id, u.status, u.setup_token_expires, u.is_active
        FROM users u
-       WHERE u.setup_token = $1 OR LOWER(u.email) = LOWER($1)`,
-      [token]
+       WHERE LOWER(u.email) = $1 AND u.setup_token = $2`,
+      [normalizedEmail, cleanToken]
     );
 
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ message: 'Invalid or expired account setup token.' });
+      return res.status(400).json({ message: 'Invalid email address or setup token.' });
     }
 
     const user = result.rows[0];
@@ -369,7 +376,7 @@ router.post('/setup/:token', async (req, res) => {
 
     if (user.setup_token_expires && new Date(user.setup_token_expires) < new Date()) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ message: 'Account setup link has expired.' });
+      return res.status(400).json({ message: 'Account setup token has expired.' });
     }
 
     // Process Public Key registration
@@ -419,7 +426,8 @@ router.post('/setup/:token', async (req, res) => {
     });
 
     res.json({
-      message: 'Account setup completed successfully. Status updated to ACTIVE.',
+      success: true,
+      message: 'Account setup completed successfully! Status updated to ACTIVE. You can now log in.',
       user: {
         id: user.id,
         name: user.name,
@@ -433,6 +441,60 @@ router.post('/setup/:token', async (req, res) => {
     res.status(500).json({ message: 'Failed to complete account setup.' });
   } finally {
     client.release();
+  }
+});
+
+// GET /api/auth/setup/:token - Backward compatible lookup route
+router.get('/setup/:token', async (req, res) => {
+  let { token } = req.params;
+  if (!token) return res.status(400).json({ message: 'Token is required.' });
+
+  if (token.includes('/setup/')) {
+    token = token.split('/setup/').pop();
+  }
+  token = decodeURIComponent(token).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
+
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.name, u.email, u.status, u.setup_token, u.setup_token_expires, u.is_active, o.name as organization_name
+       FROM users u
+       JOIN organizations o ON u.organization_id = o.id
+       WHERE u.setup_token = $1`,
+      [token]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: 'Invalid or expired account setup link.' });
+    }
+
+    const user = result.rows[0];
+
+    if (user.status === 'DISABLED') {
+      return res.status(403).json({ message: 'This account has been disabled. Please contact your organization administrator.' });
+    }
+
+    if (user.status === 'ACTIVE' || user.is_active) {
+      return res.status(400).json({ message: 'This account setup has already been completed. Please log in.' });
+    }
+
+    if (user.setup_token_expires && new Date(user.setup_token_expires) < new Date()) {
+      return res.status(400).json({ message: 'Account setup link has expired. Please contact your organization administrator.' });
+    }
+
+    res.json({
+      valid: true,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        setupToken: user.setup_token,
+        status: user.status || 'SETUP_REQUIRED',
+        organizationName: user.organization_name,
+      },
+    });
+  } catch (error) {
+    console.error('[Auth Setup Check Error]:', error.message);
+    res.status(500).json({ message: 'Failed to validate account setup token.' });
   }
 });
 
