@@ -51,6 +51,7 @@ export default function DashboardPage({
           subtext="AES-256-GCM Encrypted"
           icon={Lock}
           color="var(--accent-blue)"
+          onClick={() => setActiveTab && setActiveTab('files')}
         />
         <StatCard
           title="Shared With Me"
@@ -58,6 +59,7 @@ export default function DashboardPage({
           subtext="X25519 DEK Wrapped"
           icon={Share2}
           color="var(--accent-cyan)"
+          onClick={() => setActiveTab && setActiveTab('files')}
         />
         <StatCard
           title="Active Members"

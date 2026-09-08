@@ -6,15 +6,20 @@ const PROTOCOL_INFO = Buffer.from('SecureVault-DEK-Wrap-v1', 'utf-8');
  * Builds a deterministic AAD Buffer binding the wrapped DEK to the protocol, file ID, and recipient user ID.
  */
 function buildWrapAad(fileId, recipientUserId) {
-  return Buffer.from(`SecureVault-DEK-Wrap-v1:${fileId}:${recipientUserId}`, 'utf-8');
+  const normFileId = String(fileId || '').trim().toLowerCase();
+  const normUserId = String(recipientUserId || '').trim().toLowerCase();
+  return Buffer.from(`SecureVault-DEK-Wrap-v1:${normFileId}:${normUserId}`, 'utf-8');
 }
 
 /**
  * Derives a 256-bit AES wrapping key using X25519 DH key agreement and HKDF-SHA-256.
  */
 function deriveWrappingKey(privateKeyPem, publicKeyPem, saltBuffer) {
-  const privKeyObj = crypto.createPrivateKey(privateKeyPem);
-  const pubKeyObj = crypto.createPublicKey(publicKeyPem);
+  const cleanPriv = String(privateKeyPem || '').trim().replace(/\r\n/g, '\n');
+  const cleanPub = String(publicKeyPem || '').trim().replace(/\r\n/g, '\n');
+
+  const privKeyObj = crypto.createPrivateKey(cleanPriv);
+  const pubKeyObj = crypto.createPublicKey(cleanPub);
 
   const sharedSecret = crypto.diffieHellman({
     privateKey: privKeyObj,
@@ -74,7 +79,13 @@ function unwrapDek(wrappedDekBase64, wrapSaltBase64, wrapIvBase64, wrapAuthTagBa
   decipher.setAAD(aadBuffer);
   decipher.setAuthTag(wrapAuthTag);
 
-  const unwrappedDek = Buffer.concat([decipher.update(wrappedDek), decipher.final()]);
+  let unwrappedDek;
+  try {
+    unwrappedDek = Buffer.concat([decipher.update(wrappedDek), decipher.final()]);
+  } catch (err) {
+    console.error('[unwrapDek Authentication Failure]:', err.message);
+    throw new Error('Failed to decrypt shared file key. The recipient key pair does not match the key used during file sharing.');
+  }
 
   if (!unwrappedDek || unwrappedDek.length !== 32) {
     throw new Error('Unwrapped DEK length mismatch.');

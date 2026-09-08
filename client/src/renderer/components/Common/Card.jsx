@@ -14,7 +14,7 @@ export function Card({ title, action, children, style = {} }) {
   );
 }
 
-export function StatCard({ title, value, subtext, icon: Icon, color = 'var(--accent-blue)' }) {
+export function StatCard({ title, value, subtext, icon: Icon, color = 'var(--accent-blue)', onClick }) {
   const renderIcon = () => {
     if (!Icon) return null;
     if (React.isValidElement(Icon)) return Icon;
@@ -26,7 +26,16 @@ export function StatCard({ title, value, subtext, icon: Icon, color = 'var(--acc
   };
 
   return (
-    <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
+    <div
+      className="card"
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '1.25rem',
+        ...(onClick ? { cursor: 'pointer' } : {}),
+      }}
+    >
       {Icon && (
         <div
           style={{

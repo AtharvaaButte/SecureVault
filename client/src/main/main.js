@@ -674,11 +674,14 @@ ipcMain.handle('get-shared-files', async (_event, token) => {
   }
 });
 
-ipcMain.handle('download-decrypt-shared-file', async (_event, { fileId, currentUserId, token, reauthPassword }) => {
+ipcMain.handle('download-decrypt-shared-file', async (_event, { fileId, currentUserId, recipientUserId, token, reauthPassword }) => {
   try {
     if (!localPrivateKeyPem) {
       throw new Error('Local cryptographic identity private key is not available.');
     }
+
+    const tokenPayload = token ? JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString()) : {};
+    const targetUserId = currentUserId || recipientUserId || tokenPayload.userId;
 
     const headers = {
       'Authorization': `Bearer ${token}`,
@@ -712,7 +715,7 @@ ipcMain.handle('download-decrypt-shared-file', async (_event, { fileId, currentU
       wrapping.senderPublicKey,
       localPrivateKeyPem,
       fileId,
-      currentUserId
+      targetUserId
     );
 
     fileCrypto.storeDek(fileId, unwrappedDek);

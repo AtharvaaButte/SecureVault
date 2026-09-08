@@ -313,17 +313,15 @@ export default function FilesPage({
                   </div>
 
                   <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end', marginTop: '1.25rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)' }}>
-                    {canRead && (
-                      <button
-                        onClick={() => onDownloadSharedFile(file.id)}
-                        disabled={sharedDownloadStatus[file.id]}
-                        className="btn btn-secondary btn-sm"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                      >
-                        <Download size={14} />
-                        <span>{sharedDownloadStatus[file.id] ? 'Unwrapping DEK...' : 'Download & Decrypt'}</span>
-                      </button>
-                    )}
+                    <button
+                      onClick={() => onDownloadSharedFile(file.id)}
+                      disabled={sharedDownloadStatus[file.id]}
+                      className="btn btn-secondary btn-sm"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                    >
+                      <Download size={14} />
+                      <span>{sharedDownloadStatus[file.id] ? 'Unwrapping DEK...' : 'Download & Decrypt'}</span>
+                    </button>
                   </div>
                 </Card>
               );
