@@ -175,7 +175,7 @@ export default function FileShareModal({
             ) : searchResults.length > 0 ? (
               searchResults.map((member) => {
                 const isSelected = selectedRecipient?.id === member.id;
-                const isKeyReady = Boolean(member.publicKeyRegistered);
+                const isMemberActive = (member.status === 'ACTIVE' || member.isActive) && Boolean(member.publicKeyRegistered && member.publicKey);
                 const initial = (member.name || member.email || 'U').charAt(0).toUpperCase();
 
                 return (
@@ -205,13 +205,13 @@ export default function FileShareModal({
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                      {isKeyReady ? (
+                      {isMemberActive ? (
                         <span className="badge badge-key-active">
-                          <Key size={11} /> Ready
+                          <Key size={11} /> ACTIVE (E2EE Ready)
                         </span>
                       ) : (
                         <span className="badge badge-key-pending">
-                          <ShieldAlert size={11} /> Setup Pending
+                          <ShieldAlert size={11} /> SETUP REQUIRED
                         </span>
                       )}
 
@@ -226,84 +226,89 @@ export default function FileShareModal({
           </div>
 
           {/* Selected Recipient & Restriction Configuration Panel */}
-          {selectedRecipient && (
-            <div style={styles.recipientConfigBox}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
-                <div>
-                  <div style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                    {selectedRecipient.name || selectedRecipient.email}
-                  </div>
-                  {recipientPermissions && (
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                      Roles: {recipientPermissions.roles?.map((r) => r.name).join(', ') || 'Standard Member'}
+          {selectedRecipient && (() => {
+            const isSelectedActive = (selectedRecipient.status === 'ACTIVE' || selectedRecipient.isActive) && Boolean(selectedRecipient.publicKeyRegistered && selectedRecipient.publicKey);
+
+            return (
+              <div style={styles.recipientConfigBox}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
+                  <div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                      {selectedRecipient.name || selectedRecipient.email}
                     </div>
-                  )}
+                    {recipientPermissions && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                        Roles: {recipientPermissions.roles?.map((r) => r.name).join(', ') || 'Standard Member'}
+                      </div>
+                    )}
+                  </div>
+
+                  <span className={`badge ${isSelectedActive ? 'badge-key-active' : 'badge-key-pending'}`}>
+                    {isSelectedActive ? <Key size={11} /> : <ShieldAlert size={11} />}
+                    {isSelectedActive ? 'ACTIVE (E2EE Ready)' : 'SETUP REQUIRED'}
+                  </span>
                 </div>
 
-                <span className={`badge ${selectedRecipient.publicKeyRegistered ? 'badge-key-active' : 'badge-key-pending'}`}>
-                  {selectedRecipient.publicKeyRegistered ? <Key size={11} /> : <ShieldAlert size={11} />}
-                  {selectedRecipient.publicKeyRegistered ? 'E2EE Ready' : 'Setup Pending'}
-                </span>
-              </div>
+                <div>
+                  <div style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>
+                    Optionally Restrict Recipient Operations:
+                  </div>
 
-              <div>
-                <div style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>
-                  Optionally Restrict Recipient Operations:
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    {[
+                      { op: 'FILE_SHARE', label: 'Block Re-sharing (Prevent recipient from sharing file)' },
+                      { op: 'FILE_REVOKE', label: 'Block Revocation (Prevent recipient from revoking access)' },
+                      { op: 'FILE_DELETE', label: 'Block File Deletion (Prevent recipient from deleting file)' },
+                    ].map(({ op, label }) => {
+                      const isBlocked = blockedOps.includes(op);
+                      return (
+                        <label
+                          key={op}
+                          style={{
+                            ...styles.checkboxCard,
+                            ...(isBlocked ? styles.checkboxCardActive : {}),
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isBlocked}
+                            onChange={() => handleOpToggle(op)}
+                            disabled={!isSelectedActive}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  {[
-                    { op: 'FILE_SHARE', label: 'Block Re-sharing (Prevent recipient from sharing file)' },
-                    { op: 'FILE_REVOKE', label: 'Block Revocation (Prevent recipient from revoking access)' },
-                    { op: 'FILE_DELETE', label: 'Block File Deletion (Prevent recipient from deleting file)' },
-                  ].map(({ op, label }) => {
-                    const isBlocked = blockedOps.includes(op);
-                    return (
-                      <label
-                        key={op}
-                        style={{
-                          ...styles.checkboxCard,
-                          ...(isBlocked ? styles.checkboxCardActive : {}),
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isBlocked}
-                          onChange={() => handleOpToggle(op)}
-                        />
-                        <span>{label}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {selectedRecipient.publicKeyRegistered ? (
-                <button
-                  type="submit"
-                  disabled={sharing}
-                  className="btn btn-primary"
-                  style={{ width: '100%', justifyContent: 'center', padding: '0.65rem' }}
-                >
-                  <Share2 size={16} />
-                  <span>{sharing ? 'Encrypting & Sharing DEK...' : `Share File Access`}</span>
-                </button>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {isSelectedActive ? (
                   <button
-                    type="button"
-                    disabled
-                    className="btn btn-secondary"
-                    style={{ width: '100%', justifyContent: 'center', padding: '0.65rem', opacity: 0.6, cursor: 'not-allowed' }}
+                    type="submit"
+                    disabled={sharing}
+                    className="btn btn-primary"
+                    style={{ width: '100%', justifyContent: 'center', padding: '0.65rem' }}
                   >
-                    <Lock size={16} />
-                    <span>Setup Pending - Cannot Share</span>
+                    <Share2 size={16} />
+                    <span>{sharing ? 'Encrypting & Sharing DEK...' : `Share File Access`}</span>
                   </button>
-                  <Alert type="warning" message="This user has not completed secure account setup yet." />
-                </div>
-              )}
-            </div>
-          )}
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      disabled
+                      className="btn btn-secondary"
+                      style={{ width: '100%', justifyContent: 'center', padding: '0.65rem', opacity: 0.6, cursor: 'not-allowed' }}
+                    >
+                      <Lock size={16} />
+                      <span>SETUP REQUIRED - CANNOT SHARE E2EE</span>
+                    </button>
+                    <Alert type="warning" message="This member has status 'SETUP REQUIRED' and has not set up their encryption keys yet. Tell the user to complete account setup first." />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </form>
 
         {/* Existing Active File Shares Table */}

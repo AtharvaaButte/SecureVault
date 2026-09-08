@@ -34,26 +34,19 @@ router.get('/members', verifyToken, async (req, res) => {
       const roles = await rbacService.getUserRoles(u.id);
       const permissions = await rbacService.getUserPermissions(u.id);
 
-      let pubKey = u.public_key;
-      if (!pubKey) {
-        const kp = crypto.generateKeyPairSync('x25519');
-        pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
-        await pool.query(
-          `INSERT INTO user_keys (user_id, public_key, key_algorithm)
-           VALUES ($1, $2, 'X25519') ON CONFLICT (user_id) DO NOTHING`,
-          [u.id, pubKey]
-        );
-      }
+      const pubKey = u.public_key || null;
+      const isKeyRegistered = Boolean(u.public_key);
+      const computedStatus = u.status || (u.is_active ? 'ACTIVE' : 'SETUP_REQUIRED');
 
       users.push({
         id: u.id,
         name: u.name,
         email: u.email,
-        status: u.status || (u.is_active ? 'ACTIVE' : 'SETUP_REQUIRED'),
-        isActive: Boolean(u.is_active),
+        status: computedStatus,
+        isActive: Boolean(u.is_active && computedStatus === 'ACTIVE'),
         setupToken: callerCanManage ? (u.setup_token || null) : null,
         publicKey: pubKey,
-        publicKeyRegistered: true,
+        publicKeyRegistered: isKeyRegistered,
         roles,
         permissions: callerCanManage ? permissions : [],
         createdAt: u.created_at,
@@ -93,7 +86,7 @@ router.get('/search', verifyToken, async (req, res) => {
     const queryStr = req.query.q ? String(req.query.q).trim().toLowerCase() : '';
 
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.created_at, uk.public_key
+      `SELECT u.id, u.name, u.email, u.status, u.is_active, u.created_at, uk.public_key
        FROM users u
        LEFT JOIN user_keys uk ON u.id = uk.user_id
        WHERE u.organization_id = $1 
@@ -107,24 +100,18 @@ router.get('/search', verifyToken, async (req, res) => {
     const users = [];
     for (const u of result.rows) {
       const roles = await rbacService.getUserRoles(u.id);
-
-      let pubKey = u.public_key;
-      if (!pubKey) {
-        const kp = crypto.generateKeyPairSync('x25519');
-        pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
-        await pool.query(
-          `INSERT INTO user_keys (user_id, public_key, key_algorithm)
-           VALUES ($1, $2, 'X25519') ON CONFLICT (user_id) DO NOTHING`,
-          [u.id, pubKey]
-        );
-      }
+      const pubKey = u.public_key || null;
+      const isKeyRegistered = Boolean(u.public_key);
+      const computedStatus = u.status || (u.is_active ? 'ACTIVE' : 'SETUP_REQUIRED');
 
       users.push({
         id: u.id,
         name: u.name,
         email: u.email,
+        status: computedStatus,
+        isActive: Boolean(u.is_active && computedStatus === 'ACTIVE'),
         publicKey: pubKey,
-        publicKeyRegistered: true,
+        publicKeyRegistered: isKeyRegistered,
         roles,
         createdAt: u.created_at,
       });
