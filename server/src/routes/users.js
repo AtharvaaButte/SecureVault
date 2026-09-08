@@ -24,6 +24,11 @@ router.get('/members', verifyToken, async (req, res) => {
       [orgId]
     );
 
+    const isCallerOwner = Boolean(req.user.isOwner);
+    const callerCanManage = isCallerOwner ||
+      (await rbacService.hasPermission(req.user.userId, 'USER_MANAGE')) ||
+      (await rbacService.hasPermission(req.user.userId, 'USER_CREATE'));
+
     const users = [];
     for (const u of result.rows) {
       const roles = await rbacService.getUserRoles(u.id);
@@ -46,11 +51,11 @@ router.get('/members', verifyToken, async (req, res) => {
         email: u.email,
         status: u.status || (u.is_active ? 'ACTIVE' : 'SETUP_REQUIRED'),
         isActive: Boolean(u.is_active),
-        setupToken: u.setup_token || null,
+        setupToken: callerCanManage ? (u.setup_token || null) : null,
         publicKey: pubKey,
         publicKeyRegistered: true,
         roles,
-        permissions,
+        permissions: callerCanManage ? permissions : [],
         createdAt: u.created_at,
       });
     }

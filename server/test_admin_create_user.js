@@ -48,19 +48,23 @@ async function testAdminCreateUserFlow() {
   const adminOrgId = regRes.data.organization.id;
   console.log(`✅ Admin registered in Org (${adminOrgId}): ${adminEmail}`);
 
+  // 1b. Create role
+  const roleRes = await request('POST', '/api/roles', { name: 'MemberRole', permissions: ['FILE_READ'] }, { 'Authorization': `Bearer ${adminToken}` });
+  const roleId = roleRes.data.role.id;
+
   // 2. Admin creates new user via POST /api/users
-  const createRes = await request('POST', '/api/users', { email: newUserEmail, password: 'UserPassword2026!', role: 'USER' }, { 'Authorization': `Bearer ${adminToken}` });
+  const createRes = await request('POST', '/api/users', { name: 'Test User', email: newUserEmail, password: 'UserPassword2026!', roleIds: [roleId] }, { 'Authorization': `Bearer ${adminToken}` });
   if (createRes.status !== 201) throw new Error(`User creation failed (Status ${createRes.status}): ${JSON.stringify(createRes.data)}`);
   
   const createdUserId = createRes.data.user.id;
   console.log(`✅ Admin created new user via POST /api/users: ${createdUserId} (${newUserEmail})`);
 
   // 3. Verify in PostgreSQL
-  const dbUser = await pool.query('SELECT id, email, organization_id, role FROM users WHERE id = $1', [createdUserId]);
+  const dbUser = await pool.query('SELECT id, email, organization_id FROM users WHERE id = $1', [createdUserId]);
   if (dbUser.rows.length === 0) throw new Error('FAIL: Created user missing from PostgreSQL!');
   if (dbUser.rows[0].organization_id !== adminOrgId) throw new Error('FAIL: Created user organization mismatch!');
 
-  console.log(`✅ PostgreSQL Verification: User exists in database with organization_id=${dbUser.rows[0].organization_id} and role=${dbUser.rows[0].role}`);
+  console.log(`✅ PostgreSQL Verification: User exists in database with organization_id=${dbUser.rows[0].organization_id}`);
 
   // 4. Admin lists org members via GET /api/users/members
   const membersRes = await request('GET', '/api/users/members', null, { 'Authorization': `Bearer ${adminToken}` });

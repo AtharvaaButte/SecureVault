@@ -88,7 +88,7 @@ export default function MembersPage({
               <th>Member Name</th>
               <th>Status</th>
               <th>Assigned Roles</th>
-              <th>Effective Permissions</th>
+              {canManage && <th>Effective Permissions</th>}
               <th>Created Date</th>
               <th style={{ textAlign: 'right' }}>Actions</th>
             </tr>
@@ -111,7 +111,7 @@ export default function MembersPage({
                         <span className="badge badge-key-pending" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
                           <Clock size={12} /> SETUP REQUIRED
                         </span>
-                        {member.setupToken && (
+                        {member.setupToken && (canManage || canCreate) && (
                           <button
                             onClick={() => handleCopySetupLink(member.id, member.setupToken)}
                             className="btn btn-secondary btn-sm"
@@ -139,9 +139,11 @@ export default function MembersPage({
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No Roles Assigned</span>
                     )}
                   </td>
-                  <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                    {member.permissions?.slice(0, 3).join(', ')}{member.permissions?.length > 3 ? ` +${member.permissions.length - 3} more` : ''}
-                  </td>
+                  {canManage && (
+                    <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                      {member.permissions?.slice(0, 3).join(', ')}{member.permissions?.length > 3 ? ` +${member.permissions.length - 3} more` : ''}
+                    </td>
+                  )}
                   <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(member.createdAt).toLocaleDateString()}</td>
                   <td style={{ textAlign: 'right' }}>
                     {canManage && (

@@ -14,6 +14,9 @@ export default function DashboardPage({
   onVerifyAuditChain,
   setActiveTab,
 }) {
+  const isOwner = Boolean(currentUser?.isOwner);
+  const canManageOrg = isOwner || (currentUser?.permissions && currentUser.permissions.includes('ORG_MANAGE'));
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
       {/* Welcome Banner Card */}
@@ -63,17 +66,19 @@ export default function DashboardPage({
           icon={Users}
           color="var(--accent-emerald)"
         />
-        <StatCard
-          title="Geo-Fencing Status"
-          value={orgPolicy?.enforce_geo_fencing ? 'ENFORCED' : 'DISABLED'}
-          subtext={orgPolicy?.enforce_geo_fencing ? 'Restricted to Allowed Locations' : 'Location Check Contextual'}
-          icon={Globe}
-          color={orgPolicy?.enforce_geo_fencing ? 'var(--accent-rose)' : 'var(--accent-amber)'}
-        />
+        {canManageOrg && (
+          <StatCard
+            title="Geo-Fencing Status"
+            value={orgPolicy?.enforce_geo_fencing ? 'ENFORCED' : 'DISABLED'}
+            subtext={orgPolicy?.enforce_geo_fencing ? 'Restricted to Allowed Locations' : 'Location Check Contextual'}
+            icon={Globe}
+            color={orgPolicy?.enforce_geo_fencing ? 'var(--accent-rose)' : 'var(--accent-amber)'}
+          />
+        )}
       </div>
 
       {/* Security Health & Policy Summary Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: canManageOrg ? '1fr 1fr' : '1fr', gap: '1.5rem' }}>
         {/* User Identity & Effective Permissions */}
         <Card title="Identity & Effective Permissions">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -109,33 +114,33 @@ export default function DashboardPage({
           </div>
         </Card>
 
-        {/* Audit Chain Integrity Verification Card */}
-        <Card title="Security Audit Log Hash Chain">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-              All system events are recorded in a tamper-evident SHA-256 cryptographic hash chain. Verify database audit logs integrity live.
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <span className={`badge ${auditVerification?.valid ? 'badge-active' : 'badge-public'}`}>
-                  {auditVerification?.valid ? 'CHAINS VALID & INTACT' : 'NOT VERIFIED YET'}
-                </span>
-                {auditVerification?.chainLength !== undefined && (
-                  <span style={{ fontSize: '0.775rem', color: 'var(--text-muted)', marginLeft: '0.5rem' }}>
-                    ({auditVerification.chainLength} Log Entries)
-                  </span>
-                )}
+        {/* Audit Chain Integrity Verification Card (Admin Only) */}
+        {canManageOrg && (
+          <Card title="Security Audit Log Hash Chain">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                All system events are recorded in a tamper-evident SHA-256 cryptographic hash chain. Verify database audit logs integrity live.
               </div>
 
-              {(currentUser?.isOwner || currentUser?.permissions?.includes('ORG_MANAGE')) && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <span className={`badge ${auditVerification?.valid ? 'badge-active' : 'badge-public'}`}>
+                    {auditVerification?.valid ? 'CHAINS VALID & INTACT' : 'NOT VERIFIED YET'}
+                  </span>
+                  {auditVerification?.chainLength !== undefined && (
+                    <span style={{ fontSize: '0.775rem', color: 'var(--text-muted)', marginLeft: '0.5rem' }}>
+                      ({auditVerification.chainLength} Log Entries)
+                    </span>
+                  )}
+                </div>
+
                 <button onClick={onVerifyAuditChain} className="btn btn-secondary btn-sm">
                   Run Chain Check
                 </button>
-              )}
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        )}
       </div>
     </div>
   );

@@ -57,6 +57,24 @@ export default function PoliciesPage({
     setCityName('');
   };
 
+  if (!canManage) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
+        <Card title="Organization Security Policies">
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2.5rem 1.5rem', textAlign: 'center' }}>
+            <Sliders size={48} style={{ color: 'var(--accent-blue)', marginBottom: '1rem' }} />
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 0.5rem' }}>
+              Zero-Trust Security Policies Active
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', maxWidth: '480px', margin: 0, lineHeight: '1.5' }}>
+              Organization security policies, multi-factor step-up re-authentication rules, and geographic access restrictions are automatically enforced by organization administrators.
+            </p>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
       {/* Core Policy Switches */}
@@ -71,7 +89,6 @@ export default function PoliciesPage({
                   type="checkbox"
                   checked={requireStepUpLocation}
                   onChange={(e) => setRequireStepUpLocation(e.target.checked)}
-                  disabled={!canManage}
                 />
               </label>
               <div style={{ fontSize: '0.775rem', color: 'var(--text-muted)' }}>
@@ -87,7 +104,6 @@ export default function PoliciesPage({
                   type="checkbox"
                   checked={requireStepUpSensitive}
                   onChange={(e) => setRequireStepUpSensitive(e.target.checked)}
-                  disabled={!canManage}
                 />
               </label>
               <div style={{ fontSize: '0.775rem', color: 'var(--text-muted)' }}>
@@ -103,7 +119,6 @@ export default function PoliciesPage({
                   type="checkbox"
                   checked={enforceGeoFencing}
                   onChange={(e) => setEnforceGeoFencing(e.target.checked)}
-                  disabled={!canManage}
                 />
               </label>
               <div style={{ fontSize: '0.775rem', color: 'var(--text-muted)' }}>
@@ -112,62 +127,58 @@ export default function PoliciesPage({
             </div>
           </div>
 
-          {canManage && (
-            <div>
-              <button type="submit" disabled={updating} className="btn btn-primary btn-sm">
-                {updating ? 'Updating Policies...' : 'Save Core Security Settings'}
-              </button>
-            </div>
-          )}
+          <div>
+            <button type="submit" disabled={updating} className="btn btn-primary btn-sm">
+              {updating ? 'Updating Policies...' : 'Save Core Security Settings'}
+            </button>
+          </div>
         </form>
       </Card>
 
       {/* Multi-Geographic Allowed Locations Policy Table & Form */}
       <Card title="Multi-Geographic Allowed Locations (organization_geo_policies)">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {canManage && (
-            <form onSubmit={handleAddGeoSubmit} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', backgroundColor: 'var(--bg-dark-input)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">Country Code (ISO)</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. IN, US, UK"
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value)}
-                  maxLength={2}
-                  required
-                />
-              </div>
+          <form onSubmit={handleAddGeoSubmit} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', backgroundColor: 'var(--bg-dark-input)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">Country Code (ISO)</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. IN, US, UK"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                maxLength={2}
+                required
+              />
+            </div>
 
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">State / Region (Optional)</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. Maharashtra, California"
-                  value={stateName}
-                  onChange={(e) => setStateName(e.target.value)}
-                />
-              </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">State / Region (Optional)</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Maharashtra, California"
+                value={stateName}
+                onChange={(e) => setStateName(e.target.value)}
+              />
+            </div>
 
-              <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">City (Optional)</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. Mumbai, San Francisco"
-                  value={cityName}
-                  onChange={(e) => setCityName(e.target.value)}
-                />
-              </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label className="form-label">City (Optional)</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="e.g. Mumbai, San Francisco"
+                value={cityName}
+                onChange={(e) => setCityName(e.target.value)}
+              />
+            </div>
 
-              <button type="submit" disabled={addingGeo || !country} className="btn btn-primary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                <Plus size={14} />
-                <span>{addingGeo ? 'Adding...' : 'Add Allowed Location'}</span>
-              </button>
-            </form>
-          )}
+            <button type="submit" disabled={addingGeo || !country} className="btn btn-primary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+              <Plus size={14} />
+              <span>{addingGeo ? 'Adding...' : 'Add Allowed Location'}</span>
+            </button>
+          </form>
 
           {/* Allowed Locations Table */}
           <div className="table-container">
@@ -188,12 +199,10 @@ export default function PoliciesPage({
                       <td>{loc.allowed_state || 'ALL STATES (*)'}</td>
                       <td>{loc.allowed_city || 'ALL CITIES (*)'}</td>
                       <td style={{ textAlign: 'right' }}>
-                        {canManage && (
-                          <button onClick={() => onRemoveGeoLocation(loc.id)} className="btn btn-danger btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
-                            <Trash2 size={12} />
-                            <span>Remove</span>
-                          </button>
-                        )}
+                        <button onClick={() => onRemoveGeoLocation(loc.id)} className="btn btn-danger btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                          <Trash2 size={12} />
+                          <span>Remove</span>
+                        </button>
                       </td>
                     </tr>
                   ))
