@@ -763,6 +763,14 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+      console.warn(`[Dev Load Warning] Failed to load Vite dev server (${errorCode}: ${errorDescription}). Retrying in 1s...`);
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.loadURL('http://localhost:5173');
+        }
+      }, 1000);
+    });
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));

@@ -6,9 +6,9 @@
   "scripts": {
     "dev:vite": "vite",
     "build:vite": "vite build",
-    "dev": "concurrently \"npm run dev:vite\" \"wait-on tcp:5173 && electron .\"",
-    "dev:alice": "wait-on tcp:5173 && electron . --profile=alice",
-    "dev:bob": "wait-on tcp:5173 && electron . --profile=bob",
+    "dev": "concurrently \"npm run dev:vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:alice": "wait-on http://localhost:5173 && electron . --profile=alice",
+    "dev:bob": "wait-on http://localhost:5173 && electron . --profile=bob",
     "dev:alice-bob": "concurrently -n vite,alice,bob -c cyan,magenta,green \"npm run dev:vite\" \"npm run dev:alice\" \"npm run dev:bob\"",
     "start": "electron .",
     "build": "vite build"
