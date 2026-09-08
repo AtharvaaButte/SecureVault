@@ -167,11 +167,14 @@ async function runThreeSecurityFlowsTest() {
   console.log(`  ✓ Setup with weak password rejected with 400: "${weakSetup.data.message}"`);
 
   // Complete setup with strong password
+  const memberKeyPair = crypto.generateKeyPairSync('x25519');
+  const memberPubKey = memberKeyPair.publicKey.export({ type: 'spki', format: 'pem' });
   const memberPass = 'StrongMemb3rP@ss!';
   const completeSetup = await request('POST', '/api/auth/setup/complete', {
     email: pendingEmail,
     setupToken,
     password: memberPass,
+    publicKey: memberPubKey,
     securityHint: 'Favorite security algorithm: AES-256',
   });
 

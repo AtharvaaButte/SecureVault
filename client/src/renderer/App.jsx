@@ -151,14 +151,28 @@ export default function App() {
 
   // Setup Cryptographic X25519 Identity
   const setupCryptoIdentity = async (authToken, userObj = null) => {
+    let activePubKey = null;
     if (window.electronAPI) {
       try {
         const status = await window.electronAPI.getIdentityStatus();
+        let identity = status;
         if (!status.hasIdentity || !status.publicKey) {
-          const ensured = await window.electronAPI.ensureIdentity();
-          setCryptoIdentity({ ...ensured, hasIdentity: true });
-        } else {
-          setCryptoIdentity({ ...status, hasIdentity: true });
+          identity = await window.electronAPI.ensureIdentity();
+        }
+        activePubKey = identity.publicKey;
+        setCryptoIdentity({ ...identity, hasIdentity: true, registered: Boolean(activePubKey) });
+
+        // Register local device public key with backend user_keys if authenticated
+        const tkn = authToken || token;
+        if (tkn && activePubKey) {
+          fetch(`${API_BASE}/crypto/public-key`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${tkn}`,
+            },
+            body: JSON.stringify({ publicKey: activePubKey, keyAlgorithm: 'X25519' }),
+          }).catch((err) => console.error('[Public Key Registration Error]:', err.message));
         }
         return;
       } catch (err) {
@@ -166,8 +180,8 @@ export default function App() {
       }
     }
     // Web / Browser mode fallback or when user key is registered on backend
-    const pubKey = userObj?.publicKey || currentUser?.publicKey || 'X25519-KEY-REGISTERED';
-    setCryptoIdentity({ hasIdentity: true, registered: true, publicKey: pubKey });
+    const pubKey = userObj?.publicKey || currentUser?.publicKey;
+    setCryptoIdentity({ hasIdentity: Boolean(pubKey), registered: Boolean(pubKey), publicKey: pubKey });
   };
 
   // Restore session from Electron storage on startup

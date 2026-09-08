@@ -101,6 +101,13 @@ export default function FileShareModal({
       if (permData) pubKey = permData.publicKey;
     }
 
+    const isRecipientActive = (selectedRecipient.status === 'ACTIVE' || selectedRecipient.isActive) && Boolean(pubKey);
+    if (!isRecipientActive) {
+      setSharing(false);
+      setErrorMsg('Cannot share file with this member. The recipient account has pending setup and must set up their encryption keys before files can be shared with them.');
+      return;
+    }
+
     const result = await onShare({
       fileId: file.id,
       recipientUserId: selectedRecipient.id,

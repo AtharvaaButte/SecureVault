@@ -146,16 +146,7 @@ router.get('/:id/permissions', verifyToken, async (req, res) => {
     const roles = await rbacService.getUserRoles(targetUserId);
     const permissions = await rbacService.getUserPermissions(targetUserId);
 
-    let pubKey = targetUser.public_key;
-    if (!pubKey) {
-      const kp = crypto.generateKeyPairSync('x25519');
-      pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
-      await pool.query(
-        `INSERT INTO user_keys (user_id, public_key, key_algorithm)
-         VALUES ($1, $2, 'X25519') ON CONFLICT (user_id) DO NOTHING`,
-        [targetUserId, pubKey]
-      );
-    }
+    const pubKey = targetUser.public_key || null;
 
     res.json({
       userId: targetUserId,
@@ -163,7 +154,7 @@ router.get('/:id/permissions', verifyToken, async (req, res) => {
       email: targetUser.email,
       isOwner: Boolean(targetUser.is_owner),
       publicKey: pubKey,
-      publicKeyRegistered: true,
+      publicKeyRegistered: Boolean(pubKey),
       roles,
       permissions,
     });
@@ -244,15 +235,6 @@ router.post('/', verifyToken, requirePermission('USER_CREATE'), async (req, res)
           [newUser.id, rId]
         );
       }
-
-      // Auto-provision X25519 key pair for newly created user
-      const kp = crypto.generateKeyPairSync('x25519');
-      const pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
-      await client.query(
-        `INSERT INTO user_keys (user_id, public_key, key_algorithm)
-         VALUES ($1, $2, 'X25519') ON CONFLICT DO NOTHING`,
-        [newUser.id, pubKey]
-      );
 
       await client.query('COMMIT');
 

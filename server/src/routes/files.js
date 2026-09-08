@@ -277,18 +277,12 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
       return res.status(403).json({ message: 'Access denied. Cross-organization file sharing is strictly prohibited.' });
     }
 
-    if (recipient.status === 'SETUP_REQUIRED' || recipient.status === 'DISABLED') {
-      return res.status(400).json({ message: 'This user has not completed account setup yet.' });
+    if (recipient.status === 'SETUP_REQUIRED' || recipient.status === 'DISABLED' || !recipient.is_active) {
+      return res.status(400).json({ message: 'Recipient user has not completed account setup yet. Files can only be shared with active members.' });
     }
 
     if (!recipient.public_key) {
-      const kp = crypto.generateKeyPairSync('x25519');
-      const pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
-      await pool.query(
-        `INSERT INTO user_keys (user_id, public_key, key_algorithm)
-         VALUES ($1, $2, 'X25519') ON CONFLICT DO NOTHING`,
-        [recipient.id, pubKey]
-      );
+      return res.status(400).json({ message: 'Recipient user has not registered an encryption public key yet. Tell the user to complete account setup and log in first.' });
     }
 
     // 2. Process blockedOperations array from standard base permission catalog: ['FILE_READ', 'FILE_SHARE', 'FILE_REVOKE', 'FILE_DELETE']

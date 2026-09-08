@@ -220,18 +220,9 @@ router.post('/login', async (req, res) => {
       locationLabel: location.regionLabel,
     });
 
-    // Fetch or auto-provision public key
+    // Fetch registered public key
     const keyRes = await pool.query('SELECT public_key FROM user_keys WHERE user_id = $1', [user.id]);
-    let pubKey = keyRes.rows.length > 0 ? keyRes.rows[0].public_key : null;
-    if (!pubKey) {
-      const kp = crypto.generateKeyPairSync('x25519');
-      pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
-      await pool.query(
-        `INSERT INTO user_keys (user_id, public_key, key_algorithm)
-         VALUES ($1, $2, 'X25519') ON CONFLICT (user_id) DO NOTHING`,
-        [user.id, pubKey]
-      );
-    }
+    const pubKey = keyRes.rows.length > 0 ? keyRes.rows[0].public_key : null;
 
     const token = generateToken({
       userId: user.id,
@@ -251,7 +242,7 @@ router.post('/login', async (req, res) => {
         status: user.status || 'ACTIVE',
         isOwner: Boolean(user.is_owner),
         publicKey: pubKey,
-        publicKeyRegistered: true,
+        publicKeyRegistered: Boolean(pubKey),
         roles: userRoles,
         permissions: userPermissions,
         createdAt: user.created_at,
@@ -539,17 +530,9 @@ router.get('/me', verifyToken, async (req, res) => {
 
     const user = result.rows[0];
     const userRoles = await rbacService.getUserRoles(user.id);
+    const userPermissions = await rbacService.getUserPermissions(user.id);
     const keyRes = await pool.query('SELECT public_key FROM user_keys WHERE user_id = $1', [user.id]);
-    let pubKey = keyRes.rows.length > 0 ? keyRes.rows[0].public_key : null;
-    if (!pubKey) {
-      const kp = crypto.generateKeyPairSync('x25519');
-      pubKey = kp.publicKey.export({ type: 'spki', format: 'pem' });
-      await pool.query(
-        `INSERT INTO user_keys (user_id, public_key, key_algorithm)
-         VALUES ($1, $2, 'X25519') ON CONFLICT (user_id) DO NOTHING`,
-        [user.id, pubKey]
-      );
-    }
+    const pubKey = keyRes.rows.length > 0 ? keyRes.rows[0].public_key : null;
 
     res.json({
       user: {
@@ -558,7 +541,7 @@ router.get('/me', verifyToken, async (req, res) => {
         email: user.email,
         isOwner: Boolean(user.is_owner),
         publicKey: pubKey,
-        publicKeyRegistered: true,
+        publicKeyRegistered: Boolean(pubKey),
         roles: userRoles,
         permissions: userPermissions,
         createdAt: user.created_at,

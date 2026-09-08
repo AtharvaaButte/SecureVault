@@ -1,5 +1,6 @@
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { pool } = require('./src/db');
 
@@ -68,12 +69,18 @@ async function runSanitizationTest() {
   console.log(`  ✓ Owner created pending user with setupToken: ${setupToken}`);
 
   // 4. Complete pending user setup to activate normal member
+  const memberKeyPair = crypto.generateKeyPairSync('x25519');
+  const memberPubKey = memberKeyPair.publicKey.export({ type: 'spki', format: 'pem' });
   const memberPass = 'StrongMemb3rP@ss1!';
   const completeSetup = await request('POST', '/api/auth/setup/complete', {
     email: pendingMemberEmail,
     setupToken,
     password: memberPass,
+    publicKey: memberPubKey,
   });
+  if (completeSetup.status !== 200) {
+    throw new Error(`Setup completion failed: ${JSON.stringify(completeSetup.data)}`);
+  }
   const normalMemberToken = completeSetup.data.token;
   console.log('  ✓ Normal member setup completed and session token obtained.');
 
