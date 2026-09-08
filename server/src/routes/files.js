@@ -202,8 +202,8 @@ router.get('/shared', verifyToken, requirePermission('FILE_READ'), async (req, r
   }
 });
 
-// GET /api/files/:id/shares - Get list of users a file is shared with (Requires FILE_REVOKE & Access)
-router.get('/:id/shares', verifyToken, requireFileAccess('REVOKE'), async (req, res) => {
+// GET /api/files/:id/shares - Get list of users a file is shared with (Requires File Access Authorization)
+router.get('/:id/shares', verifyToken, requireFileAccess('READ'), async (req, res) => {
   try {
     const fileId = req.params.id;
     const currentUserId = req.user.userId;
@@ -469,21 +469,28 @@ router.get('/:id/download', verifyToken, requireFileAccess('READ'), async (req, 
   }
 });
 
-// DELETE /api/files/:id - Delete owned file from cloud storage & database (Requires FILE_DELETE & File Access Authorization)
+// DELETE /api/files/:id - Delete file (If owner: deletes completely from B2 & DB. If non-owner recipient: removes shared access for user)
 router.delete('/:id', verifyToken, requireFileAccess('DELETE'), async (req, res) => {
   try {
     const fileId = req.params.id;
     const fileRecord = req.fileRecord;
+    const isOwner = fileRecord.owner_id === req.user.userId;
 
-    // 1. Delete object from Backblaze B2 bucket
-    try {
-      await deleteFromB2(fileRecord.storage_key);
-    } catch (b2Err) {
-      console.warn('[B2 Delete Warning]:', b2Err.message);
+    if (isOwner) {
+      // 1. Delete object from Backblaze B2 bucket
+      try {
+        await deleteFromB2(fileRecord.storage_key);
+      } catch (b2Err) {
+        console.warn('[B2 Delete Warning]:', b2Err.message);
+      }
+
+      // 2. Delete file record from PostgreSQL (Cascade deletes file_keys and file_restrictions)
+      await pool.query('DELETE FROM files WHERE id = $1', [fileId]);
+    } else {
+      // 2. Non-owner recipient deleting shared file -> Remove share key & restrictions for this user only
+      await pool.query('DELETE FROM file_keys WHERE file_id = $1 AND user_id = $2', [fileId, req.user.userId]);
+      await pool.query('DELETE FROM file_restrictions WHERE file_id = $1 AND user_id = $2', [fileId, req.user.userId]);
     }
-
-    // 2. Delete file record from PostgreSQL (Cascade deletes file_keys and file_restrictions)
-    await pool.query('DELETE FROM files WHERE id = $1', [fileId]);
 
     // 3. Record Audit Event
     const location = geoService.extractLocation(req);
@@ -499,7 +506,7 @@ router.delete('/:id', verifyToken, requireFileAccess('DELETE'), async (req, res)
     });
 
     res.json({
-      message: 'File deleted successfully from cloud storage and database.',
+      message: isOwner ? 'File deleted successfully from cloud storage and database.' : 'Shared file access removed from your vault.',
       fileId,
     });
   } catch (error) {
