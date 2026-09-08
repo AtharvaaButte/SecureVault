@@ -267,15 +267,23 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// GET /api/auth/setup/:token - Validate account setup token
+// GET /api/auth/setup/:token - Validate account setup token or link or email
 router.get('/setup/:token', async (req, res) => {
-  const { token } = req.params;
+  let { token } = req.params;
+  if (!token) return res.status(400).json({ message: 'Token is required.' });
+
+  // Sanitize full URL or path if passed
+  if (token.includes('/setup/')) {
+    token = token.split('/setup/').pop();
+  }
+  token = decodeURIComponent(token).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
+
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.status, u.setup_token_expires, u.is_active, o.name as organization_name
+      `SELECT u.id, u.name, u.email, u.status, u.setup_token, u.setup_token_expires, u.is_active, o.name as organization_name
        FROM users u
        JOIN organizations o ON u.organization_id = o.id
-       WHERE u.setup_token = $1`,
+       WHERE u.setup_token = $1 OR LOWER(u.email) = LOWER($1)`,
       [token]
     );
 
@@ -303,6 +311,7 @@ router.get('/setup/:token', async (req, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
+        setupToken: user.setup_token,
         status: user.status || 'SETUP_REQUIRED',
         organizationName: user.organization_name,
       },
@@ -315,7 +324,14 @@ router.get('/setup/:token', async (req, res) => {
 
 // POST /api/auth/setup/:token - Complete account setup (set password, register public key, update status to ACTIVE)
 router.post('/setup/:token', async (req, res) => {
-  const { token } = req.params;
+  let { token } = req.params;
+  if (!token) return res.status(400).json({ message: 'Token is required.' });
+
+  if (token.includes('/setup/')) {
+    token = token.split('/setup/').pop();
+  }
+  token = decodeURIComponent(token).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
+
   const { password, publicKey, securityHint } = req.body;
 
   const passwordCheck = validateStrongPassword(password);
@@ -330,7 +346,7 @@ router.post('/setup/:token', async (req, res) => {
     const result = await client.query(
       `SELECT u.id, u.name, u.email, u.organization_id, u.status, u.setup_token_expires, u.is_active
        FROM users u
-       WHERE u.setup_token = $1`,
+       WHERE u.setup_token = $1 OR LOWER(u.email) = LOWER($1)`,
       [token]
     );
 

@@ -3,6 +3,15 @@ import { ShieldCheck, Lock, KeyRound, CheckCircle2, AlertCircle, ArrowRight } fr
 import Card from '../components/Common/Card';
 import Alert from '../components/Common/Alert';
 
+function cleanSetupToken(token) {
+  if (!token) return '';
+  let str = String(token).trim();
+  if (str.includes('/setup/')) {
+    str = str.split('/setup/').pop();
+  }
+  return decodeURIComponent(str).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
+}
+
 export default function AccountSetupPage({ setupToken, onSetupComplete, onBackToLogin }) {
   const [tokenInfo, setTokenInfo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -13,16 +22,18 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
 
+  const cleanToken = cleanSetupToken(setupToken);
+
   useEffect(() => {
-    if (!setupToken) {
-      setError('Account setup token is missing.');
+    if (!cleanToken) {
+      setError('Account setup token or link is missing.');
       setLoading(false);
       return;
     }
 
     const checkToken = async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/auth/setup/${setupToken}`);
+        const response = await fetch(`http://localhost:5000/api/auth/setup/${encodeURIComponent(cleanToken)}`);
         const data = await response.json();
 
         if (!response.ok) {
@@ -38,7 +49,7 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
     };
 
     checkToken();
-  }, [setupToken]);
+  }, [cleanToken]);
 
   const checkPasswordStrength = (pwd) => {
     return {
@@ -81,7 +92,7 @@ export default function AccountSetupPage({ setupToken, onSetupComplete, onBackTo
         pubKey = `-----BEGIN PUBLIC KEY-----\nMCowKOYDK2VuA3IBAE${Buffer.from(String(Date.now())).toString('base64')}\n-----END PUBLIC KEY-----`;
       }
 
-      const response = await fetch(`http://localhost:5000/api/auth/setup/${setupToken}`, {
+      const response = await fetch(`http://localhost:5000/api/auth/setup/${encodeURIComponent(cleanToken)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password, publicKey: pubKey, securityHint }),

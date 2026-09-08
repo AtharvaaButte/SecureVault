@@ -39,6 +39,15 @@ function getFriendlyErrorMessage(err) {
   return msg;
 }
 
+function cleanSetupToken(token) {
+  if (!token) return '';
+  let str = String(token).trim();
+  if (str.includes('/setup/')) {
+    str = str.split('/setup/').pop();
+  }
+  return decodeURIComponent(str).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
+}
+
 export default function App() {
   // Session & Identity Context
   const [token, setToken] = useState(null);
@@ -50,8 +59,8 @@ export default function App() {
   // Active Setup Flow State
   const [activeSetupToken, setActiveSetupToken] = useState(() => {
     const path = window.location.pathname;
-    if (path.startsWith('/setup/')) {
-      return path.split('/setup/')[1];
+    if (path.includes('/setup/')) {
+      return cleanSetupToken(path.split('/setup/')[1]);
     }
     return null;
   });
@@ -831,54 +840,38 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '1.25rem', backgroundColor: 'var(--bg-dark-root)', padding: '0.25rem', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', backgroundColor: 'var(--bg-dark-root)', padding: '0.25rem', borderRadius: '8px' }}>
             <button
               onClick={() => setAuthTab('login')}
               style={{
                 flex: 1,
-                padding: '0.45rem 0.2rem',
+                padding: '0.5rem',
                 border: 'none',
                 borderRadius: '6px',
                 backgroundColor: authTab === 'login' ? 'var(--bg-dark-card-hover)' : 'transparent',
                 color: authTab === 'login' ? 'var(--text-primary)' : 'var(--text-muted)',
                 fontWeight: '600',
-                fontSize: '0.8rem',
+                fontSize: '0.85rem',
                 cursor: 'pointer',
               }}
             >
               Sign In
             </button>
             <button
-              onClick={() => setAuthTab('setup')}
-              style={{
-                flex: 1,
-                padding: '0.45rem 0.2rem',
-                border: 'none',
-                borderRadius: '6px',
-                backgroundColor: authTab === 'setup' ? 'var(--bg-dark-card-hover)' : 'transparent',
-                color: authTab === 'setup' ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontWeight: '600',
-                fontSize: '0.8rem',
-                cursor: 'pointer',
-              }}
-            >
-              Account Setup
-            </button>
-            <button
               onClick={() => setAuthTab('register')}
               style={{
                 flex: 1,
-                padding: '0.45rem 0.2rem',
+                padding: '0.5rem',
                 border: 'none',
                 borderRadius: '6px',
                 backgroundColor: authTab === 'register' ? 'var(--bg-dark-card-hover)' : 'transparent',
                 color: authTab === 'register' ? 'var(--text-primary)' : 'var(--text-muted)',
                 fontWeight: '600',
-                fontSize: '0.8rem',
+                fontSize: '0.85rem',
                 cursor: 'pointer',
               }}
             >
-              Register Org
+              Register Organization
             </button>
           </div>
 
@@ -918,52 +911,12 @@ export default function App() {
               <div style={{ textAlign: 'center', marginTop: '0.5rem' }}>
                 <button
                   type="button"
-                  onClick={() => {
-                    setAuthTab('setup');
-                    setShowSetupTokenModal(true);
-                  }}
+                  onClick={() => setShowSetupTokenModal(true)}
                   style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}
                 >
                   Have an Account Setup Token? Complete Setup Here
                 </button>
               </div>
-            </form>
-          ) : authTab === 'setup' ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (setupTokenInput && setupTokenInput.trim()) {
-                  setActiveSetupToken(setupTokenInput.trim());
-                  setSetupTokenInput('');
-                }
-              }}
-              style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
-            >
-              <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-                Enter your <strong>Account Setup Token</strong> provided by your organization administrator to set your password and activate your vault account.
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Account Setup Token *</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="Paste setup token here..."
-                  value={setupTokenInput}
-                  onChange={(e) => setSetupTokenInput(e.target.value)}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={!setupTokenInput.trim()}
-                style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}
-              >
-                Continue Account Setup
-              </button>
             </form>
           ) : (
             (() => {
@@ -1083,8 +1036,9 @@ export default function App() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (setupTokenInput && setupTokenInput.trim()) {
-                setActiveSetupToken(setupTokenInput.trim());
+              const cleaned = cleanSetupToken(setupTokenInput);
+              if (cleaned) {
+                setActiveSetupToken(cleaned);
                 setShowSetupTokenModal(false);
                 setSetupTokenInput('');
               }
@@ -1092,14 +1046,14 @@ export default function App() {
             style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
           >
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: 0 }}>
-              Please enter your Account Setup Token provided by your organization administrator.
+              Enter your Account Setup Token, full setup URL, or account email provided by your administrator.
             </p>
             <div className="form-group">
-              <label className="form-label">Setup Token *</label>
+              <label className="form-label">Setup Token / Link / Email *</label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="Paste your setup token here..."
+                placeholder="Paste setup token or link (e.g. http://localhost:5173/setup/...)"
                 value={setupTokenInput}
                 onChange={(e) => setSetupTokenInput(e.target.value)}
                 required
