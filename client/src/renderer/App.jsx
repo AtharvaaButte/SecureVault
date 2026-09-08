@@ -831,38 +831,54 @@ export default function App() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', backgroundColor: 'var(--bg-dark-root)', padding: '0.25rem', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '1.25rem', backgroundColor: 'var(--bg-dark-root)', padding: '0.25rem', borderRadius: '8px' }}>
             <button
               onClick={() => setAuthTab('login')}
               style={{
                 flex: 1,
-                padding: '0.5rem',
+                padding: '0.45rem 0.2rem',
                 border: 'none',
                 borderRadius: '6px',
                 backgroundColor: authTab === 'login' ? 'var(--bg-dark-card-hover)' : 'transparent',
                 color: authTab === 'login' ? 'var(--text-primary)' : 'var(--text-muted)',
                 fontWeight: '600',
-                fontSize: '0.85rem',
+                fontSize: '0.8rem',
                 cursor: 'pointer',
               }}
             >
               Sign In
             </button>
             <button
+              onClick={() => setAuthTab('setup')}
+              style={{
+                flex: 1,
+                padding: '0.45rem 0.2rem',
+                border: 'none',
+                borderRadius: '6px',
+                backgroundColor: authTab === 'setup' ? 'var(--bg-dark-card-hover)' : 'transparent',
+                color: authTab === 'setup' ? 'var(--text-primary)' : 'var(--text-muted)',
+                fontWeight: '600',
+                fontSize: '0.8rem',
+                cursor: 'pointer',
+              }}
+            >
+              Account Setup
+            </button>
+            <button
               onClick={() => setAuthTab('register')}
               style={{
                 flex: 1,
-                padding: '0.5rem',
+                padding: '0.45rem 0.2rem',
                 border: 'none',
                 borderRadius: '6px',
                 backgroundColor: authTab === 'register' ? 'var(--bg-dark-card-hover)' : 'transparent',
                 color: authTab === 'register' ? 'var(--text-primary)' : 'var(--text-muted)',
                 fontWeight: '600',
-                fontSize: '0.85rem',
+                fontSize: '0.8rem',
                 cursor: 'pointer',
               }}
             >
-              Register Organization
+              Register Org
             </button>
           </div>
 
@@ -902,12 +918,52 @@ export default function App() {
               <div style={{ textAlign: 'center', marginTop: '0.5rem' }}>
                 <button
                   type="button"
-                  onClick={() => setShowSetupTokenModal(true)}
+                  onClick={() => {
+                    setAuthTab('setup');
+                    setShowSetupTokenModal(true);
+                  }}
                   style={{ background: 'none', border: 'none', color: 'var(--accent-blue)', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}
                 >
                   Have an Account Setup Token? Complete Setup Here
                 </button>
               </div>
+            </form>
+          ) : authTab === 'setup' ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (setupTokenInput && setupTokenInput.trim()) {
+                  setActiveSetupToken(setupTokenInput.trim());
+                  setSetupTokenInput('');
+                }
+              }}
+              style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+            >
+              <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                Enter your <strong>Account Setup Token</strong> provided by your organization administrator to set your password and activate your vault account.
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Account Setup Token *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Paste setup token here..."
+                  value={setupTokenInput}
+                  onChange={(e) => setSetupTokenInput(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={!setupTokenInput.trim()}
+                style={{ width: '100%', marginTop: '0.5rem', justifyContent: 'center' }}
+              >
+                Continue Account Setup
+              </button>
             </form>
           ) : (
             (() => {
@@ -939,9 +995,9 @@ export default function App() {
                     <input
                       type="text"
                       className="form-input"
-                      placeholder="Atharva Butte"
-                      value={regName}
-                      onChange={(e) => setRegName(e.target.value)}
+                      placeholder="Jane Doe"
+                      value={regOwnerName}
+                      onChange={(e) => setRegOwnerName(e.target.value)}
                       required
                     />
                   </div>
@@ -959,11 +1015,11 @@ export default function App() {
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Owner Password *</label>
+                    <label className="form-label">Owner Master Password *</label>
                     <input
                       type="password"
                       className="form-input"
-                      placeholder="Enter strong password"
+                      placeholder="••••••••"
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
                       required
@@ -1014,6 +1070,59 @@ export default function App() {
             })()
           )}
         </div>
+
+        {/* Account Setup Token Modal for Auth Screen */}
+        <Modal
+          isOpen={showSetupTokenModal}
+          title="Enter Account Setup Token"
+          onClose={() => {
+            setShowSetupTokenModal(false);
+            setSetupTokenInput('');
+          }}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (setupTokenInput && setupTokenInput.trim()) {
+                setActiveSetupToken(setupTokenInput.trim());
+                setShowSetupTokenModal(false);
+                setSetupTokenInput('');
+              }
+            }}
+            style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}
+          >
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: 0 }}>
+              Please enter your Account Setup Token provided by your organization administrator.
+            </p>
+            <div className="form-group">
+              <label className="form-label">Setup Token *</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Paste your setup token here..."
+                value={setupTokenInput}
+                onChange={(e) => setSetupTokenInput(e.target.value)}
+                required
+                autoFocus
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setShowSetupTokenModal(false);
+                  setSetupTokenInput('');
+                }}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={!setupTokenInput.trim()}>
+                Continue Setup
+              </button>
+            </div>
+          </form>
+        </Modal>
       </div>
     );
   }

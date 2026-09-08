@@ -69,7 +69,7 @@ export default function MembersPage({
                 <Badge type="owner" />
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                {ownerInfo.email} • Inherent Ownership Authority | X25519 Identity: {ownerInfo.publicKeyRegistered ? 'Active' : 'Unregistered'}
+                {ownerInfo.email} • Inherent Ownership Authority
               </div>
             </div>
 
@@ -87,7 +87,6 @@ export default function MembersPage({
             <tr>
               <th>Member Name</th>
               <th>Status</th>
-              <th>Crypto Identity</th>
               <th>Assigned Roles</th>
               <th>Effective Permissions</th>
               <th>Created Date</th>
@@ -130,12 +129,6 @@ export default function MembersPage({
                     )}
                   </td>
                   <td>
-                    <span className={`badge ${member.publicKeyRegistered ? 'badge-key-active' : 'badge-key-pending'}`}>
-                      {member.publicKeyRegistered ? <Key size={11} /> : <ShieldAlert size={11} />}
-                      {member.publicKeyRegistered ? 'E2EE READY' : 'NO KEY'}
-                    </span>
-                  </td>
-                  <td>
                     {member.roles && member.roles.length > 0 ? (
                       member.roles.map((r) => (
                         <span key={r.id} style={{ fontSize: '0.75rem', backgroundColor: 'var(--bg-dark-input)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-color)', margin: '0 0.2rem' }}>
@@ -176,7 +169,7 @@ export default function MembersPage({
               ))
             ) : (
               <tr>
-                <td colSpan="7">
+                <td colSpan="6">
                   <div className="empty-state">
                     <Users size={36} style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }} />
                     <div className="empty-state-title">No Member Accounts</div>
