@@ -808,13 +808,29 @@ export default function App() {
     }
   };
 
+  const handleAutoLoginAfterSetup = (sessionData) => {
+    setActiveSetupToken(null);
+    if (sessionData && sessionData.token) {
+      setToken(sessionData.token);
+      setCurrentUser(sessionData.user);
+      setCurrentOrg(sessionData.organization);
+      setUserPermissions(sessionData.user.permissions || []);
+      if (window.electronAPI && typeof window.electronAPI.saveSession === 'function') {
+        window.electronAPI.saveSession(sessionData.token);
+      }
+      setupCryptoIdentity(sessionData.token);
+      fetchAllData(sessionData.token);
+      setSuccessMsg('Account activated and signed in successfully!');
+    }
+  };
+
   if (activeSetupToken) {
     const isObj = typeof activeSetupToken === 'object' && activeSetupToken !== null;
     return (
       <AccountSetupPage
         setupToken={isObj ? activeSetupToken.setupToken : activeSetupToken}
         initialEmail={isObj ? activeSetupToken.email : ''}
-        onSetupComplete={() => setActiveSetupToken(null)}
+        onSetupComplete={(sessionData) => handleAutoLoginAfterSetup(sessionData)}
         onBackToLogin={() => setActiveSetupToken(null)}
       />
     );

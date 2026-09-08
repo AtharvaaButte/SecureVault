@@ -425,14 +425,37 @@ router.post('/setup/complete', async (req, res) => {
       locationLabel: 'Local',
     });
 
+    // Generate JWT Session Token for immediate auto-login
+    const userRoles = await rbacService.getUserRoles(user.id);
+    const userPermissions = await rbacService.getUserPermissions(user.id);
+    const orgRes = await pool.query('SELECT id, name FROM organizations WHERE id = $1', [user.organization_id]);
+    const org = orgRes.rows[0];
+
+    const sessionToken = generateToken({
+      userId: user.id,
+      email: user.email,
+      orgId: user.organization_id,
+      isOwner: false,
+    });
+
     res.json({
       success: true,
-      message: 'Account setup completed successfully! Status updated to ACTIVE. You can now log in.',
+      message: 'Account setup completed successfully! Status updated to ACTIVE.',
+      token: sessionToken,
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         status: 'ACTIVE',
+        isOwner: false,
+        publicKey: registeredPubKey,
+        publicKeyRegistered: true,
+        roles: userRoles,
+        permissions: userPermissions,
+      },
+      organization: {
+        id: org ? org.id : user.organization_id,
+        name: org ? org.name : 'SecureVault',
       },
     });
   } catch (error) {

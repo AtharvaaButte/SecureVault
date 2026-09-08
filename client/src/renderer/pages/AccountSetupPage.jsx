@@ -123,7 +123,11 @@ export default function AccountSetupPage({ setupToken: initialToken = '', initia
       if (!response.ok) {
         setError(data.message || 'Failed to activate account.');
       } else {
-        setStep(3);
+        if (data.token && onSetupComplete) {
+          onSetupComplete(data);
+        } else {
+          setStep(3);
+        }
       }
     } catch (err) {
       setError('Network error while completing setup. Please try again.');
