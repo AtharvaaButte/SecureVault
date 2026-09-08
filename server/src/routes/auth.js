@@ -1,6 +1,7 @@
 const express = require('express');
 const argon2 = require('argon2');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { pool } = require('../db');
 const { verifyToken } = require('../middleware/auth');
 const rbacService = require('../services/rbacService');
