@@ -24,14 +24,13 @@ import PoliciesPage from './pages/PoliciesPage';
 import AuditPage from './pages/AuditPage';
 import AccountSetupPage from './pages/AccountSetupPage';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = 'https://securevault-backend-qx9r.onrender.com/api';
 
-function getFriendlyErrorMessage(err) {
-  if (!err) return 'An unexpected error occurred.';
-  const msg = typeof err === 'string' ? err : (err.message || String(err));
-
-  if (msg.includes('Failed to fetch') || msg.includes('ERR_CONNECTION_REFUSED') || msg.includes('NetworkError')) {
-    return 'Unable to connect to the SecureVault backend server. Please verify that the server is running on port 5000 and try again.';
+const getFriendlyErrorMessage = (error) => {
+  if (!error) return 'An unexpected error occurred.';
+  const msg = typeof error === 'string' ? error : error.message || '';
+  if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('ENOTFOUND')) {
+    return 'Unable to connect to the SecureVault backend server. Please verify your network connection and backend status.';
   }
   if (msg.includes('jwt expired') || msg.includes('jwt malformed')) {
     return 'Your authentication session has expired. Please sign in again.';

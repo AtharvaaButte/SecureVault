@@ -28,6 +28,8 @@ const IDENTITY_PRIV_ACCOUNT = devProfile ? `identity_priv_key_${devProfile}` : '
 const IDENTITY_DIR = path.join(app.getPath('userData'), 'identity');
 const IDENTITY_PUB_PATH = path.join(IDENTITY_DIR, 'public_key.json');
 
+const API_BASE = process.env.API_BASE_URL || 'https://securevault-backend-qx9r.onrender.com/api';
+
 const getDeviceId = () => devProfile ? `electron-profile-${devProfile}` : `electron-default-device`;
 const getDevicePlatform = () => `${process.platform}-${process.arch}`;
 
@@ -292,7 +294,7 @@ ipcMain.handle('upload-ciphertext', async (_event, { fileId, dataClassification,
       headers['X-Reauth-Password'] = reauthPassword;
     }
 
-    const response = await fetch('http://localhost:5000/api/files/upload', {
+    const response = await fetch(`${API_BASE}/files/upload`, {
       method: 'POST',
       headers,
       body: formData,
@@ -327,7 +329,7 @@ ipcMain.handle('download-decrypt-file', async (_event, { fileId, token, reauthPa
       headers['X-Reauth-Password'] = reauthPassword;
     }
 
-    const response = await fetch(`http://localhost:5000/api/files/${fileId}/download`, { headers });
+    const response = await fetch(`${API_BASE}/files/${fileId}/download`, { headers });
     const data = await response.json();
 
     if (!response.ok) {
@@ -399,7 +401,7 @@ ipcMain.handle('download-decrypt-file', async (_event, { fileId, token, reauthPa
 // --- IPC Handlers for File Listing & Access Control ---
 ipcMain.handle('get-user-files', async (_event, token) => {
   try {
-    const response = await fetch('http://localhost:5000/api/files', {
+    const response = await fetch(`${API_BASE}/files`, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'X-Client-Device-ID': getDeviceId(),
@@ -417,7 +419,7 @@ ipcMain.handle('get-user-files', async (_event, token) => {
 
 ipcMain.handle('get-organization-users', async (_event, token) => {
   try {
-    const response = await fetch('http://localhost:5000/api/users/members', {
+    const response = await fetch(`${API_BASE}/users/members`, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'X-Client-Device-ID': getDeviceId(),
@@ -436,7 +438,7 @@ ipcMain.handle('get-organization-users', async (_event, token) => {
 ipcMain.handle('search-organization-members', async (_event, { query, token }) => {
   try {
     const qStr = encodeURIComponent(query || '');
-    const response = await fetch(`http://localhost:5000/api/users/search?q=${qStr}`, {
+    const response = await fetch(`${API_BASE}/users/search?q=${qStr}`, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'X-Client-Device-ID': getDeviceId(),
@@ -461,7 +463,7 @@ ipcMain.handle('delete-file', async (_event, { fileId, token, reauthPassword }) 
     };
     if (reauthPassword) headers['X-Reauth-Password'] = reauthPassword;
 
-    const response = await fetch(`http://localhost:5000/api/files/${fileId}`, {
+    const response = await fetch(`${API_BASE}/files/${fileId}`, {
       method: 'DELETE',
       headers,
     });
@@ -492,7 +494,7 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
     if (!targetPublicKey) {
       // Fallback: Query backend for recipient's public key from user_keys
       try {
-        const permRes = await fetch(`http://localhost:5000/api/users/${recipientUserId}/permissions`, {
+        const permRes = await fetch(`${API_BASE}/users/${recipientUserId}/permissions`, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'X-Client-Device-ID': getDeviceId(),
@@ -527,7 +529,7 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
       };
       if (reauthPassword) headers['X-Reauth-Password'] = reauthPassword;
 
-      const dlRes = await fetch(`http://localhost:5000/api/files/${fileId}/download`, { headers });
+      const dlRes = await fetch(`${API_BASE}/files/${fileId}/download`, { headers });
       const dlData = await dlRes.json();
       if (!dlRes.ok) {
         return {
@@ -578,7 +580,7 @@ ipcMain.handle('share-file', async (_event, { fileId, recipientUserId, recipient
     };
     if (reauthPassword) shareHeaders['X-Reauth-Password'] = reauthPassword;
 
-    const response = await fetch(`http://localhost:5000/api/files/${fileId}/share`, {
+    const response = await fetch(`${API_BASE}/files/${fileId}/share`, {
       method: 'POST',
       headers: shareHeaders,
       body: JSON.stringify({
@@ -618,7 +620,7 @@ ipcMain.handle('revoke-file-share', async (_event, { fileId, recipientUserId, to
     };
     if (reauthPassword) headers['X-Reauth-Password'] = reauthPassword;
 
-    const response = await fetch(`http://localhost:5000/api/files/${fileId}/share/${recipientUserId}`, {
+    const response = await fetch(`${API_BASE}/files/${fileId}/share/${recipientUserId}`, {
       method: 'DELETE',
       headers,
     });
@@ -640,7 +642,7 @@ ipcMain.handle('revoke-file-share', async (_event, { fileId, recipientUserId, to
 
 ipcMain.handle('get-file-shares', async (_event, { fileId, token }) => {
   try {
-    const response = await fetch(`http://localhost:5000/api/files/${fileId}/shares`, {
+    const response = await fetch(`${API_BASE}/files/${fileId}/shares`, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'X-Client-Device-ID': getDeviceId(),
@@ -658,7 +660,7 @@ ipcMain.handle('get-file-shares', async (_event, { fileId, token }) => {
 
 ipcMain.handle('get-shared-files', async (_event, token) => {
   try {
-    const response = await fetch('http://localhost:5000/api/files/shared', {
+    const response = await fetch(`${API_BASE}/files/shared`, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'X-Client-Device-ID': getDeviceId(),
@@ -690,7 +692,7 @@ ipcMain.handle('download-decrypt-shared-file', async (_event, { fileId, currentU
     };
     if (reauthPassword) headers['X-Reauth-Password'] = reauthPassword;
 
-    const response = await fetch(`http://localhost:5000/api/files/${fileId}/download`, { headers });
+    const response = await fetch(`${API_BASE}/files/${fileId}/download`, { headers });
     const data = await response.json();
 
     if (!response.ok) {

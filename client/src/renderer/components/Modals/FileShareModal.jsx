@@ -46,7 +46,7 @@ export default function FileShareModal({
           const res = await window.electronAPI.searchOrganizationMembers({ query: searchQuery, token });
           if (res.success) users = res.users || [];
         } else {
-          const response = await fetch(`http://localhost:5000/api/users/search?q=${encodeURIComponent(searchQuery || '')}`, {
+          const response = await fetch(`https://securevault-backend-qx9r.onrender.com/api/users/search?q=${encodeURIComponent(searchQuery || '')}`, {
             headers: { 'Authorization': `Bearer ${token}` },
           });
           const data = await response.json();

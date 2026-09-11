@@ -55,7 +55,7 @@ export default function AccountSetupPage({ setupToken: initialToken = '', initia
 
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/auth/setup/verify', {
+      const response = await fetch('https://securevault-backend-qx9r.onrender.com/api/auth/setup/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -107,7 +107,7 @@ export default function AccountSetupPage({ setupToken: initialToken = '', initia
         pubKey = `-----BEGIN PUBLIC KEY-----\nMCowKOYDK2VuA3IBAE${Buffer.from(String(Date.now())).toString('base64')}\n-----END PUBLIC KEY-----`;
       }
 
-      const response = await fetch('http://localhost:5000/api/auth/setup/complete', {
+      const response = await fetch('https://securevault-backend-qx9r.onrender.com/api/auth/setup/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
