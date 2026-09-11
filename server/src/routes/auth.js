@@ -341,6 +341,7 @@ router.post('/setup/complete', async (req, res) => {
     return res.status(400).json({ message: passwordCheck.message });
   }
 
+  const location = geoService.extractLocation(req);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -413,6 +414,19 @@ router.post('/setup/complete', async (req, res) => {
       [passwordHash, hint, user.id]
     );
 
+    // Register initial device location context in user_devices
+    await client.query(
+      `INSERT INTO user_devices (user_id, last_ip, last_country, last_state, last_city)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id) DO UPDATE SET
+         last_ip = EXCLUDED.last_ip,
+         last_country = EXCLUDED.last_country,
+         last_state = EXCLUDED.last_state,
+         last_city = EXCLUDED.last_city,
+         last_seen_at = CURRENT_TIMESTAMP`,
+      [user.id, location.ip, location.country, location.state, location.city]
+    );
+
     await client.query('COMMIT');
 
     await auditService.recordAuditEvent({
@@ -421,8 +435,8 @@ router.post('/setup/complete', async (req, res) => {
       eventType: 'ACCOUNT_ACTIVATED',
       action: 'ALLOW',
       resourceId: user.id,
-      ipAddress: req.ip,
-      locationLabel: 'Local',
+      ipAddress: location.ip,
+      locationLabel: location.regionLabel,
     });
 
     // Generate JWT Session Token for immediate auto-login

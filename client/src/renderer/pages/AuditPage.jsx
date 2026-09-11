@@ -67,7 +67,13 @@ export default function AuditPage({
                   </td>
                   <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{log.resource_type || 'FILE'}</td>
                   <td style={{ fontSize: '0.8rem' }}>
-                    <div style={{ fontWeight: '500' }}>{log.location_label || 'LOCAL/DEV'}</div>
+                    <div style={{ fontWeight: '500' }}>
+                      {(log.location_label === 'Local' || log.location_label === 'LOCAL/DEV' || log.ip_address === '::1' || log.ip_address === '127.0.0.1') ? (
+                        <span className="badge badge-secondary" style={{ fontSize: '0.75rem' }}>Local / Internal</span>
+                      ) : (
+                        log.location_label || 'Local / Internal'
+                      )}
+                    </div>
                     <div className="font-mono" style={{ fontSize: '0.725rem', color: 'var(--text-muted)' }}>{log.ip_address}</div>
                   </td>
                   <td className="font-mono" style={{ fontSize: '0.725rem', color: 'var(--accent-cyan)' }} title={log.current_hash}>
