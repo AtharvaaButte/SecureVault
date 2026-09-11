@@ -204,6 +204,12 @@ export default function App() {
     restoreSession();
   }, []);
 
+  useEffect(() => {
+    if (navTab === 'audit' && token) {
+      fetchAuditLogs(token);
+    }
+  }, [navTab, token]);
+
   // Fetch all dashboard & domain data
   const fetchAllData = async (authToken) => {
     const currentTkn = authToken || token;
@@ -565,6 +571,7 @@ export default function App() {
         setSelectedFile(null);
         setEncryptResult(null);
         fetchUserFiles();
+        fetchAuditLogs(token);
       } else {
         setError(getFriendlyErrorMessage(res.error || 'Upload failed'));
       }
@@ -583,6 +590,7 @@ export default function App() {
 
     if (res.success) {
       setSuccessMsg(`File decrypted & saved to ${res.savedPath}`);
+      fetchAuditLogs(token);
     } else if (res.stepUpRequired) {
       promptStepUp(res.error, (pwd) => handleDownloadFile(fileId, pwd));
     } else {
@@ -606,6 +614,7 @@ export default function App() {
 
     if (res.success) {
       setSuccessMsg(`Shared file decrypted & saved to ${res.savedPath}`);
+      fetchAuditLogs(token);
     } else if (res.stepUpRequired) {
       promptStepUp(res.error, (pwd) => handleDownloadSharedFile(fileId, pwd));
     } else {
@@ -640,6 +649,7 @@ export default function App() {
         setFileList((prev) => prev.filter((f) => f.id !== fileId));
         setSharedFileList((prev) => prev.filter((f) => f.id !== fileId));
         fetchUserFiles();
+        fetchAuditLogs(token);
       } else if (res.stepUpRequired) {
         promptStepUp(res.error, (pwd) => handleDeleteFile(fileId, pwd));
       } else {
@@ -650,24 +660,43 @@ export default function App() {
     }
   };
 
-  const handleShareFile = async (payload) => {
+  const handleShareFile = async (payload, reauthPassword = null) => {
     if (!token) return { success: false, error: 'Authentication required' };
     try {
       let res;
       if (window.electronAPI && typeof window.electronAPI.shareFile === 'function') {
-        res = await window.electronAPI.shareFile({ ...payload, token });
+        res = await window.electronAPI.shareFile({ ...payload, token, reauthPassword });
       } else {
+        const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+        if (reauthPassword) headers['X-Reauth-Password'] = reauthPassword;
         const response = await fetch(`${API_BASE}/files/${payload.fileId}/share`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          headers,
           body: JSON.stringify(payload),
         });
-        const data = await parseJsonResponse(response, 'Share failed');
-        res = { success: true, message: data.message };
+        const data = await response.json();
+        if (!response.ok) {
+          res = {
+            success: false,
+            error: data.message || 'Share failed',
+            status: response.status,
+            stepUpRequired: Boolean(data.stepUpRequired),
+          };
+        } else {
+          res = { success: true, message: data.message };
+        }
       }
 
       if (res.success) {
         fetchFileShares(payload.fileId);
+        fetchAuditLogs(token);
+      } else if (res.stepUpRequired) {
+        return new Promise((resolve) => {
+          promptStepUp(res.error || 'Step-up re-authentication required for file sharing.', async (pwd) => {
+            const retryRes = await handleShareFile(payload, pwd);
+            resolve(retryRes);
+          });
+        });
       }
       return res;
     } catch (err) {
@@ -675,23 +704,42 @@ export default function App() {
     }
   };
 
-  const handleRevokeShare = async (fileId, recipientUserId) => {
+  const handleRevokeShare = async (fileId, recipientUserId, reauthPassword = null) => {
     if (!token) return { success: false, error: 'Authentication required' };
     try {
       let res;
       if (window.electronAPI && typeof window.electronAPI.revokeFileShare === 'function') {
-        res = await window.electronAPI.revokeFileShare({ fileId, recipientUserId, token });
+        res = await window.electronAPI.revokeFileShare({ fileId, recipientUserId, token, reauthPassword });
       } else {
+        const headers = { 'Authorization': `Bearer ${token}` };
+        if (reauthPassword) headers['X-Reauth-Password'] = reauthPassword;
         const response = await fetch(`${API_BASE}/files/${fileId}/share/${recipientUserId}`, {
           method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers,
         });
-        const data = await parseJsonResponse(response, 'Revoke failed');
-        res = { success: true, message: data.message };
+        const data = await response.json();
+        if (!response.ok) {
+          res = {
+            success: false,
+            error: data.message || 'Revoke failed',
+            status: response.status,
+            stepUpRequired: Boolean(data.stepUpRequired),
+          };
+        } else {
+          res = { success: true, message: data.message };
+        }
       }
 
       if (res.success) {
         fetchFileShares(fileId);
+        fetchAuditLogs(token);
+      } else if (res.stepUpRequired) {
+        return new Promise((resolve) => {
+          promptStepUp(res.error || 'Step-up re-authentication required to revoke file share.', async (pwd) => {
+            const retryRes = await handleRevokeShare(fileId, recipientUserId, pwd);
+            resolve(retryRes);
+          });
+        });
       }
       return res;
     } catch (err) {
@@ -1252,13 +1300,15 @@ export default function App() {
       {/* File Sharing Modal */}
       {activeShareModalFile && (
         <FileShareModal
-          isOpen={Boolean(activeShareModalFile)}
+          isOpen={Boolean(activeShareModalFile) && !stepUpModal.show}
           file={activeShareModalFile}
           fileShares={fileShares[activeShareModalFile.id] || []}
           onShare={handleShareFile}
           onRevoke={handleRevokeShare}
           onClose={() => setActiveShareModalFile(null)}
           token={token}
+          currentUser={currentUser}
+          userPermissions={userPermissions}
           userPermissionsCache={userPermissionsCache}
           onFetchPermissions={fetchUserPermissionsCache}
         />

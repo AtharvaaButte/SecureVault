@@ -59,34 +59,28 @@ async function getOrganizationPolicy(orgId) {
 }
 
 async function updateOrganizationPolicy(orgId, policyData) {
-  const {
-    requireStepupNewLocation,
-    requireStepupSensitiveFile,
-    enforceGeoFencing,
-    allowedCountry,
-    allowedState,
-    allowedCity,
-  } = policyData || {};
-
+  const data = policyData || {};
   const current = await getOrganizationPolicy(orgId);
 
-  const newStepupNewLoc = requireStepupNewLocation !== undefined ? Boolean(requireStepupNewLocation) : Boolean(current.require_stepup_new_location);
-  const newStepupSensFile = requireStepupSensitiveFile !== undefined ? Boolean(requireStepupSensitiveFile) : Boolean(current.require_stepup_sensitive_file);
-  const newEnforceGeoFence = enforceGeoFencing !== undefined ? Boolean(enforceGeoFencing) : Boolean(current.enforce_geo_fencing);
+  const inputLoc = data.require_stepup_new_location !== undefined ? data.require_stepup_new_location : data.requireStepupNewLocation;
+  const inputSens = data.require_stepup_sensitive_file !== undefined ? data.require_stepup_sensitive_file : data.requireStepupSensitiveFile;
+  const inputGeo = data.enforce_geo_fencing !== undefined ? data.enforce_geo_fencing : data.enforceGeoFencing;
 
-  const updateRes = await pool.query(
+  const newStepupNewLoc = inputLoc !== undefined ? Boolean(inputLoc) : Boolean(current.require_stepup_new_location);
+  const newStepupSensFile = inputSens !== undefined ? Boolean(inputSens) : Boolean(current.require_stepup_sensitive_file);
+  const newEnforceGeoFence = inputGeo !== undefined ? Boolean(inputGeo) : Boolean(current.enforce_geo_fencing);
+
+  await pool.query(
     `UPDATE organization_policies
      SET require_stepup_new_location = $1,
          require_stepup_sensitive_file = $2,
          enforce_geo_fencing = $3,
          updated_at = CURRENT_TIMESTAMP
-     WHERE organization_id = $4
-     RETURNING *`,
+     WHERE organization_id = $4`,
     [newStepupNewLoc, newStepupSensFile, newEnforceGeoFence, orgId]
   );
 
-  const updatedPolicy = updateRes.rows[0];
-
+  const { allowedCountry, allowedState, allowedCity } = data;
   if (allowedCountry !== undefined || allowedState !== undefined || allowedCity !== undefined) {
     const firstLoc = current.allowedLocations[0] || { allowed_country: 'IN', allowed_state: 'ALL', allowed_city: 'ALL' };
     const country = (allowedCountry && allowedCountry.trim()) ? allowedCountry.trim().toUpperCase() : firstLoc.allowed_country;
@@ -101,15 +95,8 @@ async function updateOrganizationPolicy(orgId, policyData) {
     );
   }
 
-  const geoRes = await pool.query(
-    'SELECT id, allowed_country, allowed_state, allowed_city, created_at FROM organization_geo_policies WHERE organization_id = $1 ORDER BY created_at ASC',
-    [orgId]
-  );
-
-  return {
-    ...updatedPolicy,
-    allowedLocations: geoRes.rows,
-  };
+  // Reload fresh policy directly from database to return actual persisted values
+  return await getOrganizationPolicy(orgId);
 }
 
 async function addGeoPolicyLocation(orgId, { allowedCountry, allowedState, allowedCity }) {

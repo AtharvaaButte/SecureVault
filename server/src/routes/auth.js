@@ -278,15 +278,19 @@ router.post('/setup/verify', async (req, res) => {
       `SELECT u.id, u.name, u.email, u.status, u.setup_token, u.setup_token_expires, u.is_active, o.name as organization_name
        FROM users u
        JOIN organizations o ON u.organization_id = o.id
-       WHERE LOWER(u.email) = $1 AND u.setup_token = $2`,
-      [normalizedEmail, cleanToken]
+       WHERE LOWER(u.email) = $1`,
+      [normalizedEmail]
     );
 
     if (result.rows.length === 0) {
-      return res.status(400).json({ message: 'Invalid email address or setup token.' });
+      return res.status(404).json({ message: 'Email address not found.' });
     }
 
     const user = result.rows[0];
+
+    if (user.setup_token !== cleanToken) {
+      return res.status(400).json({ message: 'Invalid setup token.' });
+    }
 
     if (user.status === 'DISABLED') {
       return res.status(403).json({ message: 'This account has been disabled. Please contact your organization administrator.' });
@@ -342,18 +346,23 @@ router.post('/setup/complete', async (req, res) => {
     await client.query('BEGIN');
 
     const result = await client.query(
-      `SELECT u.id, u.name, u.email, u.organization_id, u.status, u.setup_token_expires, u.is_active
+      `SELECT u.id, u.name, u.email, u.setup_token, u.organization_id, u.status, u.setup_token_expires, u.is_active
        FROM users u
-       WHERE LOWER(u.email) = $1 AND u.setup_token = $2`,
-      [normalizedEmail, cleanToken]
+       WHERE LOWER(u.email) = $1`,
+      [normalizedEmail]
     );
 
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ message: 'Invalid email address or setup token.' });
+      return res.status(404).json({ message: 'Email address not found.' });
     }
 
     const user = result.rows[0];
+
+    if (user.setup_token !== cleanToken) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: 'Invalid setup token.' });
+    }
 
     if (user.status === 'DISABLED') {
       await client.query('ROLLBACK');

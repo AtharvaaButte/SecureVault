@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Crown, UserCheck, UserPlus, Edit, Trash2, Key, Users, Check, Copy, AlertCircle, ShieldCheck, Clock, UserX, ShieldAlert } from 'lucide-react';
+import { Crown, UserCheck, UserPlus, Edit, Trash2, Key, Users, Check, Copy, AlertCircle, ShieldCheck, Clock, UserX, ShieldAlert, Eye } from 'lucide-react';
 import Card from '../components/Common/Card';
 import Badge from '../components/Common/Badge';
+import Modal from '../components/Common/Modal';
 import CreateUserModal from '../components/Modals/CreateUserModal';
 
 export default function MembersPage({
@@ -15,6 +16,7 @@ export default function MembersPage({
   currentUser,
 }) {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedMemberPermissions, setSelectedMemberPermissions] = useState(null);
   const [copiedTokens, setCopiedTokens] = useState({});
 
   const isOwner = currentUser?.isOwner;
@@ -39,7 +41,9 @@ export default function MembersPage({
             Organization Members
           </h3>
           <p style={{ fontSize: '0.825rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
-            Manage member identities, custom RBAC role assignments, and key registrations.
+            {canManage || canCreate
+              ? 'Manage member identities, custom RBAC role assignments, and key registrations.'
+              : 'Organization member directory for file sharing and permission visibility.'}
           </p>
         </div>
 
@@ -55,8 +59,8 @@ export default function MembersPage({
         )}
       </div>
 
-      {/* Organization Owner Card (Separated & Highlighted) */}
-      {ownerInfo && (
+      {/* Organization Owner Card (Visible for management context) */}
+      {ownerInfo && (canManage || canCreate) && (
         <Card style={{ backgroundColor: 'rgba(139, 92, 246, 0.05)', border: '1px solid rgba(139, 92, 246, 0.25)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
@@ -68,18 +72,18 @@ export default function MembersPage({
                 <Badge type="owner" />
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                {ownerInfo.email} • Inherent Ownership Authority
+                {ownerInfo.email} • Organization Owner
               </div>
             </div>
 
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-              Owner accounts are non-editable & non-deletable.
+              Owner accounts have inherent organizational authority.
             </div>
           </div>
         </Card>
       )}
 
-      {/* Organization Non-Owner Members Table */}
+      {/* Organization Members Table */}
       <div className="table-container">
         <table className="table">
           <thead>
@@ -89,7 +93,7 @@ export default function MembersPage({
               <th>Assigned Roles</th>
               {canManage && <th>Effective Permissions</th>}
               <th>Created Date</th>
-              <th style={{ textAlign: 'right' }}>Actions</th>
+              {canManage && <th style={{ textAlign: 'right' }}>Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -140,12 +144,36 @@ export default function MembersPage({
                   </td>
                   {canManage && (
                     <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      {member.permissions?.slice(0, 3).join(', ')}{member.permissions?.length > 3 ? ` +${member.permissions.length - 3} more` : ''}
+                      {member.permissions && member.permissions.length > 0 ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                          <span>{member.permissions.slice(0, 2).join(', ')}</span>
+                          {member.permissions.length > 2 && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedMemberPermissions(member)}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: 'var(--accent-blue)',
+                                cursor: 'pointer',
+                                fontSize: '0.725rem',
+                                fontWeight: '600',
+                                padding: 0,
+                                textDecoration: 'underline',
+                              }}
+                            >
+                              +{member.permissions.length - 2} more (View All)
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>No Permissions</span>
+                      )}
                     </td>
                   )}
                   <td style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(member.createdAt).toLocaleDateString()}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    {canManage && (
+                  {canManage && (
+                    <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
                         <button
                           onClick={() => onEditRoles(member)}
@@ -164,8 +192,8 @@ export default function MembersPage({
                           <span>Delete</span>
                         </button>
                       </div>
-                    )}
-                  </td>
+                    </td>
+                  )}
                 </tr>
               ))
             ) : (
@@ -182,6 +210,53 @@ export default function MembersPage({
           </tbody>
         </table>
       </div>
+
+      {/* View All Effective Permissions Modal */}
+      {selectedMemberPermissions && (
+        <Modal
+          isOpen={Boolean(selectedMemberPermissions)}
+          title={`Effective Permissions: ${selectedMemberPermissions.name || selectedMemberPermissions.email}`}
+          onClose={() => setSelectedMemberPermissions(null)}
+          footer={
+            <button onClick={() => setSelectedMemberPermissions(null)} className="btn btn-secondary btn-sm">
+              Close
+            </button>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Assigned Roles: <strong>{selectedMemberPermissions.roles?.map((r) => r.name).join(', ') || 'None'}</strong>
+            </div>
+
+            <div style={{ fontSize: '0.875rem', fontWeight: '700', color: 'var(--text-primary)', marginTop: '0.5rem' }}>
+              Full Effective Security Permissions ({selectedMemberPermissions.permissions?.length || 0})
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', maxHeight: '250px', overflowY: 'auto', padding: '0.5rem', backgroundColor: 'var(--bg-dark-input)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+              {selectedMemberPermissions.permissions && selectedMemberPermissions.permissions.length > 0 ? (
+                selectedMemberPermissions.permissions.map((perm) => (
+                  <span
+                    key={perm}
+                    className="font-mono"
+                    style={{
+                      fontSize: '0.75rem',
+                      padding: '0.25rem 0.5rem',
+                      backgroundColor: 'rgba(37, 99, 235, 0.15)',
+                      color: 'var(--accent-blue)',
+                      border: '1px solid rgba(37, 99, 235, 0.3)',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    {perm}
+                  </span>
+                ))
+              ) : (
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No effective permissions granted.</span>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Create User Modal */}
       <CreateUserModal

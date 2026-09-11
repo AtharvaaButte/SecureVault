@@ -90,7 +90,6 @@ router.get('/search', verifyToken, async (req, res) => {
        FROM users u
        LEFT JOIN user_keys uk ON u.id = uk.user_id
        WHERE u.organization_id = $1 
-         AND u.is_owner = false 
          AND ($2 = '' OR LOWER(u.name) LIKE $3 OR LOWER(u.email) LIKE $3)
        ORDER BY u.name ASC, u.email ASC
        LIMIT 20`,

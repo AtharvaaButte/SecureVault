@@ -267,9 +267,18 @@ router.post('/:id/share', verifyToken, requireFileAccess('SHARE'), async (req, r
 
     const recipient = recipientResult.rows[0];
 
-    // INVIOLABLE RULE: Exclude Organization Owner from being targeted as normal share recipient
-    if (recipient.is_owner) {
-      return res.status(400).json({ message: 'File sharing with the Organization Owner is not permitted because the Owner has inherent organizational access.' });
+    // Self-sharing prevention
+    if (recipient.id === req.user.userId) {
+      return res.status(400).json({ message: 'You cannot share a file with yourself.' });
+    }
+
+    // Duplicate share prevention
+    const existingShareRes = await pool.query(
+      'SELECT id FROM file_keys WHERE file_id = $1 AND user_id = $2',
+      [fileId, recipientUserId]
+    );
+    if (existingShareRes.rows.length > 0) {
+      return res.status(400).json({ message: 'This file has already been shared with this user.' });
     }
 
     // ORGANIZATION BOUNDARY CHECK

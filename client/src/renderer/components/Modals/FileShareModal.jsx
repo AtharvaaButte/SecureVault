@@ -11,6 +11,8 @@ export default function FileShareModal({
   onRevoke,
   onClose,
   token,
+  currentUser,
+  userPermissions = [],
   userPermissionsCache,
   onFetchPermissions,
 }) {
@@ -24,6 +26,12 @@ export default function FileShareModal({
   const [revoking, setRevoking] = useState(null);
   const [statusMsg, setStatusMsg] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  const canRevoke = Boolean(
+    currentUser?.isOwner ||
+    file?.ownerId === currentUser?.id ||
+    (userPermissions || []).includes('FILE_REVOKE')
+  );
 
   // Perform recipient search when searchQuery changes
   useEffect(() => {
@@ -44,7 +52,13 @@ export default function FileShareModal({
           const data = await response.json();
           if (response.ok) users = data.users || [];
         }
-        setSearchResults(users);
+        // Exclude currently logged-in user and already shared users from recipient list
+        const sharedUserIds = new Set([
+          ...(fileShares || []).map((s) => s.userId || s.user_id || s.id),
+          ...(file?.shares || []).map((s) => s.userId || s.user_id || s.id),
+        ]);
+        const filtered = users.filter((u) => u.id !== currentUser?.id && !sharedUserIds.has(u.id));
+        setSearchResults(filtered);
       } catch (e) {
         console.error('[Search Members Error]:', e.message);
       } finally {
@@ -53,7 +67,7 @@ export default function FileShareModal({
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, isOpen, token]);
+  }, [searchQuery, isOpen, token, currentUser?.id, fileShares, file]);
 
   useEffect(() => {
     if (selectedRecipient && onFetchPermissions) {
@@ -94,6 +108,16 @@ export default function FileShareModal({
     setSharing(true);
     setStatusMsg(null);
     setErrorMsg(null);
+
+    const sharedUserIds = new Set([
+      ...(fileShares || []).map((s) => s.userId || s.user_id || s.id),
+      ...(file?.shares || []).map((s) => s.userId || s.user_id || s.id),
+    ]);
+    if (sharedUserIds.has(selectedRecipient.id)) {
+      setSharing(false);
+      setErrorMsg('This file has already been shared with this user.');
+      return;
+    }
 
     let pubKey = selectedRecipient.publicKey;
     if (!pubKey && onFetchPermissions) {
@@ -158,7 +182,7 @@ export default function FileShareModal({
               Select Recipient Member
             </div>
             <div style={{ fontSize: '0.775rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-              Search non-owner members to grant end-to-end encrypted file access keys.
+              Search organization members to grant end-to-end encrypted file access keys.
             </div>
           </div>
 
@@ -318,11 +342,11 @@ export default function FileShareModal({
           })()}
         </form>
 
-        {/* Existing Active File Shares Table */}
+        {/* Users with Access Section */}
         <div>
           <div style={{ fontWeight: '700', fontSize: '0.9rem', color: 'var(--text-primary)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <ShieldCheck size={16} color="var(--accent-blue)" />
-            <span>Active File Access Shares ({fileShares?.length || 0})</span>
+            <span>Users with Access ({fileShares?.length || 0})</span>
           </div>
 
           {fileShares && fileShares.length > 0 ? (
@@ -330,46 +354,51 @@ export default function FileShareModal({
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Recipient</th>
-                    <th>Access Status</th>
+                    <th>User</th>
+                    <th>Access Level</th>
                     <th>Blocked Operations</th>
-                    <th style={{ textAlign: 'right' }}>Action</th>
+                    {canRevoke && <th style={{ textAlign: 'right' }}>Action</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {fileShares.map((share) => (
-                    <tr key={share.userId}>
-                      <td>
-                        <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{share.name || share.email}</div>
-                        {share.name && <div style={{ fontSize: '0.725rem', color: 'var(--text-muted)' }}>{share.email}</div>}
-                      </td>
-                      <td>
-                        <span className={`badge ${share.blockedOperations?.length > 0 ? 'badge-restricted' : 'badge-active'}`}>
-                          {share.blockedOperations?.length > 0 ? 'RESTRICTED' : 'FULL ACCESS'}
-                        </span>
-                      </td>
-                      <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                        {share.blockedOperations?.length > 0 ? share.blockedOperations.join(', ') : 'None'}
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <button
-                          onClick={() => handleRevokeSubmit(share.userId)}
-                          disabled={revoking === share.userId}
-                          className="btn btn-danger btn-sm"
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                        >
-                          <Trash2 size={12} />
-                          <span>{revoking === share.userId ? 'Revoking...' : 'Revoke'}</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {fileShares.map((share) => {
+                    const targetUserId = share.userId || share.id;
+                    return (
+                      <tr key={targetUserId}>
+                        <td>
+                          <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{share.name || share.email}</div>
+                          {share.name && <div style={{ fontSize: '0.725rem', color: 'var(--text-muted)' }}>{share.email}</div>}
+                        </td>
+                        <td>
+                          <span className={`badge ${share.blockedOperations?.length > 0 ? 'badge-restricted' : 'badge-active'}`}>
+                            {share.blockedOperations?.length > 0 ? 'RESTRICTED' : (share.accessLevel || 'FULL ACCESS')}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                          {share.blockedOperations?.length > 0 ? share.blockedOperations.join(', ') : 'None'}
+                        </td>
+                        {canRevoke && (
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              onClick={() => handleRevokeSubmit(targetUserId)}
+                              disabled={revoking === targetUserId}
+                              className="btn btn-danger btn-sm"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                            >
+                              <Trash2 size={12} />
+                              <span>{revoking === targetUserId ? 'Revoking...' : 'Revoke Access'}</span>
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           ) : (
             <div style={{ fontSize: '0.825rem', color: 'var(--text-muted)', fontStyle: 'italic', padding: '0.5rem 0' }}>
-              This file is currently not shared with any organization members.
+              This file is currently not shared with any other users.
             </div>
           )}
         </div>

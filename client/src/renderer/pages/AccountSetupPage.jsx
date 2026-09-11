@@ -12,7 +12,7 @@ function cleanTokenStr(token) {
   return decodeURIComponent(str).split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
 }
 
-export default function AccountSetupPage({ setupToken: initialToken = '', initialEmail = '', onBackToLogin }) {
+export default function AccountSetupPage({ setupToken: initialToken = '', initialEmail = '', onSetupComplete, onBackToLogin }) {
   const [email, setEmail] = useState(initialEmail || '');
   const [setupToken, setSetupToken] = useState(initialToken ? cleanTokenStr(initialToken) : '');
   const [step, setStep] = useState(1); // Step 1: Verify Email+Token, Step 2: Set Password, Step 3: Success

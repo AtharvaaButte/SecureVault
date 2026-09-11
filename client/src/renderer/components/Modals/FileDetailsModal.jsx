@@ -14,6 +14,13 @@ export default function FileDetailsModal({ isOpen, file, onClose }) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const maskCryptoValue = (str) => {
+    if (!str) return 'N/A';
+    const s = String(str).trim();
+    if (s.length <= 10) return `${s.substring(0, 3)}**...**`;
+    return `${s.substring(0, 4)}**...**${s.substring(s.length - 4)}`;
+  };
+
   return (
     <Modal
       isOpen={isOpen}
@@ -55,13 +62,28 @@ export default function FileDetailsModal({ isOpen, file, onClose }) {
 
         <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
           <span style={{ color: 'var(--text-secondary)' }}>Initialization Vector (IV):</span>
-          <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{file.iv ? `${file.iv.substring(0, 16)}...` : 'N/A'}</span>
+          <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{maskCryptoValue(file.iv)}</span>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
           <span style={{ color: 'var(--text-secondary)' }}>Authentication Tag (AuthTag):</span>
-          <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{file.authTag ? `${file.authTag.substring(0, 16)}...` : 'N/A'}</span>
+          <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{maskCryptoValue(file.authTag)}</span>
         </div>
+
+        {file.wrapping && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Sender Public Key:</span>
+              <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{maskCryptoValue(file.wrapping.senderPublicKey)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>Wrapped DEK IV / AuthTag:</span>
+              <span className="font-mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                {maskCryptoValue(file.wrapping.wrapIv)} / {maskCryptoValue(file.wrapping.wrapAuthTag)}
+              </span>
+            </div>
+          </>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <span style={{ color: 'var(--text-secondary)' }}>Upload Date:</span>

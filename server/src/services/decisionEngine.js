@@ -85,16 +85,16 @@ async function evaluateContextualDecision(userId, req, operationType, dataClassi
 
   if (normalizedClassification === 'HIGHLY_CONFIDENTIAL') {
     riskFactors.push('HIGHLY_SENSITIVE_RESOURCE');
-    if (operationType === 'FILE_READ' || isHighImpact) {
-      stepUpTriggered = true;
-      if (!triggerReason) triggerReason = `Step-up re-authentication required to access HIGHLY_CONFIDENTIAL file (${operationType}).`;
-      if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_HIGHLY_SENSITIVE_RESOURCE';
-    }
+    // Require step-up re-authentication for EVERY file action that actually exists (including Download / FILE_READ)
+    stepUpTriggered = true;
+    if (!triggerReason) triggerReason = `Step-up re-authentication required to perform ${operationType} on HIGHLY_CONFIDENTIAL file.`;
+    if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_HIGHLY_SENSITIVE_RESOURCE';
   } else if (normalizedClassification === 'CONFIDENTIAL') {
     riskFactors.push('SENSITIVE_RESOURCE');
-    if (operationType === 'FILE_READ' || isHighImpact) {
+    // Download (FILE_READ) is allowed WITHOUT step-up. Require step-up for other protected operations (FILE_SHARE, FILE_REVOKE, FILE_DELETE).
+    if (isHighImpact && orgPolicyWithGeo.require_stepup_sensitive_file) {
       stepUpTriggered = true;
-      if (!triggerReason) triggerReason = `Step-up re-authentication required for operation on CONFIDENTIAL file (${operationType}).`;
+      if (!triggerReason) triggerReason = `Step-up re-authentication required for protected operation (${operationType}) on CONFIDENTIAL file.`;
       if (decisionCode === 'ALLOW_KNOWN_CONTEXT') decisionCode = 'STEP_UP_SENSITIVE_RESOURCE';
     }
   }

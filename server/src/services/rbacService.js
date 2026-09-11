@@ -294,6 +294,15 @@ async function deleteCustomRole(orgId, roleId) {
     throw new Error('Role not found or does not belong to this organization.');
   }
 
+  const assignedUsersRes = await pool.query(
+    'SELECT COUNT(*) FROM user_roles WHERE role_id = $1',
+    [roleId]
+  );
+  const assignedCount = parseInt(assignedUsersRes.rows[0].count, 10);
+  if (assignedCount > 0) {
+    throw new Error(`Cannot delete role "${roleCheck.rows[0].name}" because it is currently assigned to ${assignedCount} member(s). Reassign or remove the role from those members first.`);
+  }
+
   await pool.query('DELETE FROM roles WHERE id = $1 AND organization_id = $2', [roleId, orgId]);
 }
 

@@ -25,15 +25,17 @@ export default function AuditPage({
             <div style={{ fontSize: '0.825rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
               Every event is linked cryptographically to the preceding log record. Current status:{' '}
               <strong style={{ color: auditVerification?.valid ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                {auditVerification?.valid ? 'CHAIN VALID & INTACT' : 'NOT VERIFIED'}
+                {auditVerification?.valid
+                  ? `CHAIN VALID & INTACT (${auditVerification.totalLogs || auditVerification.count || auditLogs?.length || 0} events verified)`
+                  : auditVerification ? `TAMPERING DETECTED / INVALID: ${auditVerification.message || 'Chain mismatch'}` : 'NOT VERIFIED'}
               </strong>
             </div>
           </div>
 
-          {canView && (
+          {onVerifyChain && (
             <button onClick={onVerifyChain} className="btn btn-primary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
               <RefreshCw size={14} />
-              <span>Verify SHA-256 Hash Chain</span>
+              <span>Validate Hash Chain & Detect Tampering</span>
             </button>
           )}
         </div>
